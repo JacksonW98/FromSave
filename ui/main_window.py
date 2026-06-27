@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
-    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog,
+    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox,
 )
 
 import storage
@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
 
         self.delete_btn = QPushButton("Delete slot")
         self.delete_btn.setObjectName("dangerBtn")
-        self.delete_btn.clicked.connect(self._stub("Delete slot"))
+        self.delete_btn.clicked.connect(self._on_delete_slot)
 
         bar.addWidget(self.import_btn)
         bar.addWidget(self.replace_btn)
@@ -408,6 +408,44 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Load failed: {e}")
             return
         self.status_bar.showMessage(f"Loaded '{slot.name}' to game save.")
+
+    def _on_delete_slot(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            self.status_bar.showMessage("No slot selected.")
+            return
+        slot = self._slots[row]
+        reply = QMessageBox.question(
+            self,
+            "Delete slot",
+            f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._flush_notes()
+        self._current_slot = None
+        try:
+            storage.delete_slot(slot)
+        except Exception as e:
+            self.status_bar.showMessage(f"Delete failed: {e}")
+            return
+        self._slots.pop(row)
+        self.slot_list.blockSignals(True)
+        self.slot_list.takeItem(row)
+        self.slot_list.blockSignals(False)
+        count = len(self._slots)
+        self.slot_count_label.setText(f"{count} slot{'s' if count != 1 else ''}")
+        if self._slots:
+            new_row = min(row, count - 1)
+            self.slot_list.blockSignals(True)
+            self.slot_list.setCurrentRow(new_row)
+            self.slot_list.blockSignals(False)
+            self._on_slot_selected(new_row)
+        else:
+            self._clear_detail()
+        self.status_bar.showMessage(f"Deleted '{slot.name}'.")
 
     def _get_game_cfg(self) -> Optional[storage.GameConfig]:
         game_name = self.game_combo.currentText()

@@ -175,6 +175,11 @@ def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
     shutil.copy2(slot.path / slot.save_file, Path(game_cfg.save_path))
 
 
+def delete_slot(slot: SaveSlot) -> None:
+    """Permanently delete a slot directory and all its contents."""
+    shutil.rmtree(slot.path)
+
+
 def _update_meta_modified(meta_file: Path, now: datetime) -> None:
     date_created, _ = _parse_meta(meta_file)
     meta = {
