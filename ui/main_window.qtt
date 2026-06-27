@@ -43,11 +43,9 @@ QListWidget::item {
   border-bottom: 1px solid #111116;
 }
 QListWidget::item:selected {
-  background: #16161a;
+  background: #292957;
 }
-QListWidget::item:hover {
-  background: #1a1a20;
-}
+
 
 /* ── Buttons — default ── */
 QPushButton {
