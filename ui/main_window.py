@@ -325,8 +325,11 @@ class MainWindow(QMainWindow):
         self.detail_notes.setPlainText(slot.notes)
         self.detail_notes.blockSignals(False)
         self.info_created.set_value(_fmt_dt(slot.date_created))
-        save_path = slot.path / slot.save_file
-        self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
+        if slot.save_file:
+            save_path = slot.path / slot.save_file
+            self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
+        else:
+            self.info_ro_status.set_value("—")
 
     def _clear_detail(self) -> None:
         self._current_slot = None
@@ -523,15 +526,29 @@ class MainWindow(QMainWindow):
             return
         self._config = dlg.result_config
         config.save_config(self._config)
-        new_paths = dlg.result_paths
-        for game in self._games:
-            if game.name in new_paths:
-                game.save_path = new_paths[game.name]
+
+        prev_game = self.game_combo.currentText()
+        self._games = dlg.result_games
         storage.save_games(self._games)
-        game_cfg = self._get_game_cfg()
-        self.info_save_path.set_value(
-            game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—"
-        )
+
+        self.game_combo.blockSignals(True)
+        self.game_combo.clear()
+        for game in self._games:
+            self.game_combo.addItem(game.name)
+        self.game_combo.blockSignals(False)
+
+        if self._games:
+            idx = self.game_combo.findText(prev_game)
+            if idx < 0:
+                idx = 0
+            self.game_combo.setCurrentIndex(idx)
+            self._on_game_changed(idx)
+        else:
+            self.profile_combo.blockSignals(True)
+            self.profile_combo.clear()
+            self.profile_combo.blockSignals(False)
+            self._reload_slots()
+
         self._apply_path_visibility()
         self.status_bar.showMessage("Settings saved.")
 
@@ -548,7 +565,7 @@ class MainWindow(QMainWindow):
             return False
         src = Path(cfg.save_path)
         if not src.exists():
-            self.status_bar.showMessage(f"Save file not found: {src}")
+            self.status_bar.showMessage(f"Save path not found: {src}")
             return False
         return True
 

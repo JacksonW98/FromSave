@@ -3,12 +3,13 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
-    QPushButton, QLineEdit, QGridLayout, QGroupBox,
-    QRadioButton, QFileDialog,
+    QPushButton, QLineEdit, QGroupBox, QWidget,
+    QRadioButton, QFileDialog, QMessageBox,
 )
 
 import config
 import storage
+from ui.add_game_dialog import AddGameDialog
 
 
 class SettingsDialog(QDialog):
@@ -22,9 +23,10 @@ class SettingsDialog(QDialog):
             auto_name_imports=cfg.auto_name_imports,
             show_save_path=cfg.show_save_path,
         )
-        self._games = games
-        self._path_edits: dict[str, QLineEdit] = {}
+        self._game_entries: list[dict] = []
         self._build_ui()
+        for game in games:
+            self._add_game_row(game.name, game.save_mode, game.save_path)
         ui_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
         qss_path = os.path.join(ui_dir, "settings_dialog.qss")
         with open(qss_path, "r") as f:
@@ -65,21 +67,19 @@ class SettingsDialog(QDialog):
 
         # Game save paths
         paths_box = QGroupBox("Game save paths")
-        paths_layout = QGridLayout(paths_box)
-        paths_layout.setSpacing(8)
-        paths_layout.setColumnStretch(1, 1)
-        for i, game in enumerate(self._games):
-            lbl = QLabel(game.name)
-            lbl.setStyleSheet("background: transparent;")
-            edit = QLineEdit(game.save_path)
-            edit.setPlaceholderText("Full path to save file…")
-            browse_btn = QPushButton("Browse…")
-            browse_btn.setFixedWidth(90)
-            browse_btn.clicked.connect(self._make_browse(edit))
-            paths_layout.addWidget(lbl, i, 0, Qt.AlignVCenter)
-            paths_layout.addWidget(edit, i, 1)
-            paths_layout.addWidget(browse_btn, i, 2)
-            self._path_edits[game.name] = edit
+        paths_outer = QVBoxLayout(paths_box)
+        paths_outer.setSpacing(6)
+
+        self._paths_layout = QVBoxLayout()
+        self._paths_layout.setSpacing(4)
+        paths_outer.addLayout(self._paths_layout)
+
+        add_btn = QPushButton("+ Add game")
+        add_btn.setObjectName("ghostBtn")
+        add_btn.setFixedWidth(110)
+        add_btn.clicked.connect(self._on_add_game)
+        paths_outer.addWidget(add_btn, alignment=Qt.AlignLeft)
+
         layout.addWidget(paths_box)
 
         # Buttons
@@ -94,11 +94,69 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(save_btn)
         layout.addLayout(btn_row)
 
-    def _make_browse(self, edit: QLineEdit):
+    def _add_game_row(self, name: str, mode: str, path: str) -> None:
+        entry: dict = {"name": name, "mode": mode}
+
+        row = QWidget()
+        row.setStyleSheet("background: transparent;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 2, 0, 2)
+        row_layout.setSpacing(8)
+
+        lbl = QLabel(name)
+        lbl.setFixedWidth(160)
+        mode_labels = {"file": "file", "files": "files", "folder": "folder"}
+        lbl.setToolTip(f"Save type: {mode_labels.get(mode, mode)}")
+
+        edit = QLineEdit(path)
+        placeholder = "Path to save file…" if mode == "file" else "Path to save folder…"
+        edit.setPlaceholderText(placeholder)
+
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(90)
+        browse_btn.clicked.connect(self._make_browse(edit, mode))
+
+        del_btn = QPushButton("×")
+        del_btn.setObjectName("dangerBtn")
+        del_btn.setFixedWidth(40)
+        del_btn.clicked.connect(lambda: self._remove_game_row(entry))
+
+        row_layout.addWidget(lbl)
+        row_layout.addWidget(edit, 1)
+        row_layout.addWidget(browse_btn)
+        row_layout.addWidget(del_btn)
+
+        entry["edit"] = edit
+        entry["widget"] = row
+
+        self._game_entries.append(entry)
+        self._paths_layout.addWidget(row)
+
+    def _remove_game_row(self, entry: dict) -> None:
+        entry["widget"].hide()
+        entry["widget"].deleteLater()
+        self._game_entries.remove(entry)
+
+    def _on_add_game(self) -> None:
+        dlg = AddGameDialog(self)
+        if not dlg.exec():
+            return
+        name, mode, path = dlg.result
+        if any(e["name"] == name for e in self._game_entries):
+            QMessageBox.warning(self, "Duplicate", f"'{name}' is already in the list.")
+            return
+        self._add_game_row(name, mode, path)
+
+    def _make_browse(self, edit: QLineEdit, mode: str):
         def handler():
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Select save file", edit.text() or ""
-            )
+            if mode == "file":
+                path, _ = QFileDialog.getOpenFileName(
+                    self, "Select save file", edit.text() or ""
+                )
+            else:
+                path = QFileDialog.getExistingDirectory(
+                    self, "Select save folder", edit.text() or ""
+                )
             if path:
                 edit.setText(path)
         return handler
@@ -115,5 +173,12 @@ class SettingsDialog(QDialog):
         return self._cfg
 
     @property
-    def result_paths(self) -> dict[str, str]:
-        return {name: edit.text().strip() for name, edit in self._path_edits.items()}
+    def result_games(self) -> list[storage.GameConfig]:
+        return [
+            storage.GameConfig(
+                name=e["name"],
+                save_path=e["edit"].text().strip(),
+                save_mode=e["mode"],
+            )
+            for e in self._game_entries
+        ]
