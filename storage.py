@@ -180,6 +180,32 @@ def delete_slot(slot: SaveSlot) -> None:
     shutil.rmtree(slot.path)
 
 
+def rename_slot(slot: SaveSlot, new_name: str) -> None:
+    """Rename a slot's directory and update the slot object in-place."""
+    new_path = slot.path.parent / new_name
+    slot.path.rename(new_path)
+    slot.name = new_name
+    slot.path = new_path
+
+
+def auto_slot_name(game: str, profile: str) -> str:
+    """Return the next unused auto-generated slot name for a profile."""
+    base = "new save"
+    if not (SAVES_DIR / game / profile / base).exists():
+        return base
+    n = 2
+    while (SAVES_DIR / game / profile / f"{base} {n}").exists():
+        n += 1
+    return f"{base} {n}"
+
+
+def save_games(games: list[GameConfig]) -> None:
+    """Write updated game configs back to games.json."""
+    data = {g.name: {"save_path": g.save_path} for g in games}
+    with open(GAMES_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+
 def _update_meta_modified(meta_file: Path, now: datetime) -> None:
     date_created, _ = _parse_meta(meta_file)
     meta = {

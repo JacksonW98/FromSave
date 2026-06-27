@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox,
 )
 
+import config
 import storage
+from ui.settings_dialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -21,6 +23,7 @@ class MainWindow(QMainWindow):
         self.resize(920, 580)
         self.setMinimumSize(700, 440)
 
+        self._config = config.load_config()
         self._games = storage.load_games()
         self._slots: list[storage.SaveSlot] = []
         self._current_slot: Optional[storage.SaveSlot] = None
@@ -110,7 +113,7 @@ class MainWindow(QMainWindow):
 
         self.settings_btn = QPushButton("⚙  Settings")
         self.settings_btn.setObjectName("ghostBtn")
-        self.settings_btn.clicked.connect(self._stub("Open settings"))
+        self.settings_btn.clicked.connect(self._on_open_settings)
         bar.addWidget(self.settings_btn)
 
         return bar
@@ -154,9 +157,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(lbl)
         layout.addSpacing(10)
 
+        name_row = QHBoxLayout()
         self.detail_name = QLabel("—")
         self.detail_name.setObjectName("detailName")
-        layout.addWidget(self.detail_name)
+        name_row.addWidget(self.detail_name, 1)
+        self.rename_btn = QPushButton("Rename")
+        self.rename_btn.setObjectName("ghostBtn")
+        self.rename_btn.setEnabled(False)
+        self.rename_btn.clicked.connect(self._on_rename_slot)
+        name_row.addWidget(self.rename_btn)
+        layout.addLayout(name_row)
 
         self.detail_time = QLabel("—")
         self.detail_time.setObjectName("mutedLabel")
@@ -304,6 +314,7 @@ class MainWindow(QMainWindow):
             return
         slot = self._slots[row]
         self._current_slot = slot
+        self.rename_btn.setEnabled(True)
         self.detail_name.setText(slot.name)
         self.detail_time.setText(_fmt_dt(slot.date_modified or slot.date_created))
         self.detail_notes.blockSignals(True)
@@ -315,6 +326,7 @@ class MainWindow(QMainWindow):
 
     def _clear_detail(self) -> None:
         self._current_slot = None
+        self.rename_btn.setEnabled(False)
         self.detail_name.setText("—")
         self.detail_time.setText("—")
         self.detail_notes.blockSignals(True)
@@ -351,10 +363,13 @@ class MainWindow(QMainWindow):
         if not profile:
             self.status_bar.showMessage("No profile selected.")
             return
-        name, ok = QInputDialog.getText(self, "Import Save", "Slot name:")
-        if not ok or not name.strip():
-            return
-        name = name.strip()
+        if self._config.auto_name_imports:
+            name = storage.auto_slot_name(self.game_combo.currentText(), profile)
+        else:
+            name, ok = QInputDialog.getText(self, "Import Save", "Slot name:")
+            if not ok or not name.strip():
+                return
+            name = name.strip()
         slot_dir = storage.SAVES_DIR / self.game_combo.currentText() / profile / name
         if slot_dir.exists():
             self.status_bar.showMessage(f"A slot named '{name}' already exists.")
@@ -380,6 +395,16 @@ class MainWindow(QMainWindow):
         if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
+        if self._config.confirm_replace:
+            reply = QMessageBox.question(
+                self,
+                "Replace save",
+                f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
         try:
             storage.replace_save(slot, cfg)
         except Exception as e:
@@ -415,15 +440,16 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No slot selected.")
             return
         slot = self._slots[row]
-        reply = QMessageBox.question(
-            self,
-            "Delete slot",
-            f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
+        if self._config.confirm_delete:
+            reply = QMessageBox.question(
+                self,
+                "Delete slot",
+                f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
         self._flush_notes()
         self._current_slot = None
         try:
@@ -446,6 +472,45 @@ class MainWindow(QMainWindow):
         else:
             self._clear_detail()
         self.status_bar.showMessage(f"Deleted '{slot.name}'.")
+
+    def _on_rename_slot(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            return
+        slot = self._slots[row]
+        name, ok = QInputDialog.getText(self, "Rename slot", "New name:", text=slot.name)
+        if not ok or not name.strip() or name.strip() == slot.name:
+            return
+        name = name.strip()
+        if (slot.path.parent / name).exists():
+            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            return
+        try:
+            storage.rename_slot(slot, name)
+        except Exception as e:
+            self.status_bar.showMessage(f"Rename failed: {e}")
+            return
+        ts = _fmt_dt(slot.date_modified or slot.date_created)
+        self.slot_list.setItemWidget(self.slot_list.item(row), _SlotItem(slot.name, ts))
+        self.detail_name.setText(slot.name)
+        self.status_bar.showMessage(f"Renamed to '{slot.name}'.")
+
+    def _on_open_settings(self) -> None:
+        dlg = SettingsDialog(self._config, self._games, self)
+        if not dlg.exec():
+            return
+        self._config = dlg.result_config
+        config.save_config(self._config)
+        new_paths = dlg.result_paths
+        for game in self._games:
+            if game.name in new_paths:
+                game.save_path = new_paths[game.name]
+        storage.save_games(self._games)
+        game_cfg = self._get_game_cfg()
+        self.info_save_path.set_value(
+            game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—"
+        )
+        self.status_bar.showMessage("Settings saved.")
 
     def _get_game_cfg(self) -> Optional[storage.GameConfig]:
         game_name = self.game_combo.currentText()

@@ -1,0 +1,5 @@
+{
+    "confirm_delete": true,
+    "confirm_replace": true,
+    "auto_name_imports": true
+}
