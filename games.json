@@ -1,26 +1,20 @@
 {
     "Elden Ring": {
-        "save_path": "",
-        "save_file": "ER0000.sl2"
+        "save_path": "/Users/jacksonwallace/Documents/fromsave/er_save/ER0000.sl2"
     },
     "Dark Souls III": {
-        "save_path": "",
-        "save_file": "DS30000.sl2"
+        "save_path": ""
     },
     "Dark Souls Remastered": {
-        "save_path": "",
-        "save_file": "DRAKS0005.sl2"
+        "save_path": ""
     },
     "Dark Souls II: Scholar of the First Sin": {
-        "save_path": "",
-        "save_file": "DARKSII0000.sl2"
+        "save_path": ""
     },
     "Sekiro": {
-        "save_path": "",
-        "save_file": "S0000.sl2"
+        "save_path": ""
     },
     "Armored Core VI": {
-        "save_path": "",
-        "save_file": "AC60000.sl2"
+        "save_path": ""
     }
 }

@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, QTimer
@@ -7,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
-    QSizePolicy, QAbstractItemView, QPlainTextEdit,
+    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog,
 )
 
 import storage
@@ -101,7 +102,7 @@ class MainWindow(QMainWindow):
 
         bar.addStretch()
 
-        self.hotkey_indicator = QLabel("F5  backup   F9  restore   F6  read-only")
+        self.hotkey_indicator = QLabel("F5  import   F9  load   F6  read-only")
         self.hotkey_indicator.setObjectName("hotkeyHint")
         bar.addWidget(self.hotkey_indicator)
 
@@ -203,19 +204,23 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.setSpacing(6)
 
-        self.backup_btn = QPushButton("Backup  (F5)")
-        self.backup_btn.setObjectName("primaryBtn")
-        self.backup_btn.clicked.connect(self._stub("Backup save"))
+        self.import_btn = QPushButton("Import Save  (F5)")
+        self.import_btn.setObjectName("primaryBtn")
+        self.import_btn.clicked.connect(self._on_import_save)
 
-        self.restore_btn = QPushButton("Restore  (F9)")
-        self.restore_btn.clicked.connect(self._stub("Restore save"))
+        self.replace_btn = QPushButton("Replace Save")
+        self.replace_btn.clicked.connect(self._on_replace_save)
+
+        self.load_btn = QPushButton("Load Save  (F9)")
+        self.load_btn.clicked.connect(self._on_load_save)
 
         self.delete_btn = QPushButton("Delete slot")
         self.delete_btn.setObjectName("dangerBtn")
         self.delete_btn.clicked.connect(self._stub("Delete slot"))
 
-        bar.addWidget(self.backup_btn)
-        bar.addWidget(self.restore_btn)
+        bar.addWidget(self.import_btn)
+        bar.addWidget(self.replace_btn)
+        bar.addWidget(self.load_btn)
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
@@ -335,8 +340,88 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Save file is now read-only.")
         else:
             self.ro_btn.setText("  Toggle read-only  (F6)")
-            self.info_ro_status.set_value("✔   Writable")
+            self.info_ro_status.set_value("Writable")
             self.status_bar.showMessage("Save file is now writable.")
+
+    def _on_import_save(self) -> None:
+        cfg = self._get_game_cfg()
+        if not cfg or not self._validate_game_save_path(cfg):
+            return
+        profile = self.profile_combo.currentText()
+        if not profile:
+            self.status_bar.showMessage("No profile selected.")
+            return
+        name, ok = QInputDialog.getText(self, "Import Save", "Slot name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        slot_dir = storage.SAVES_DIR / self.game_combo.currentText() / profile / name
+        if slot_dir.exists():
+            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            return
+        try:
+            storage.import_save(self.game_combo.currentText(), profile, name, cfg)
+        except Exception as e:
+            self.status_bar.showMessage(f"Import failed: {e}")
+            return
+        self._reload_slots()
+        for i, s in enumerate(self._slots):
+            if s.name == name:
+                self.slot_list.setCurrentRow(i)
+                break
+        self.status_bar.showMessage(f"Imported '{name}'.")
+
+    def _on_replace_save(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            self.status_bar.showMessage("No slot selected.")
+            return
+        cfg = self._get_game_cfg()
+        if not cfg or not self._validate_game_save_path(cfg):
+            return
+        slot = self._slots[row]
+        try:
+            storage.replace_save(slot, cfg)
+        except Exception as e:
+            self.status_bar.showMessage(f"Replace failed: {e}")
+            return
+        ts = _fmt_dt(slot.date_modified or slot.date_created)
+        self.slot_list.setItemWidget(self.slot_list.item(row), _SlotItem(slot.name, ts))
+        self._on_slot_selected(row)
+        self.status_bar.showMessage(f"Replaced '{slot.name}'.")
+
+    def _on_load_save(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            self.status_bar.showMessage("No slot selected.")
+            return
+        cfg = self._get_game_cfg()
+        if not cfg:
+            return
+        if not cfg.save_path:
+            self.status_bar.showMessage("Save path is not configured for this game.")
+            return
+        slot = self._slots[row]
+        try:
+            storage.load_save(slot, cfg)
+        except Exception as e:
+            self.status_bar.showMessage(f"Load failed: {e}")
+            return
+        self.status_bar.showMessage(f"Loaded '{slot.name}' to game save.")
+
+    def _get_game_cfg(self) -> Optional[storage.GameConfig]:
+        game_name = self.game_combo.currentText()
+        return next((g for g in self._games if g.name == game_name), None)
+
+    def _validate_game_save_path(self, cfg: storage.GameConfig) -> bool:
+        if not cfg.save_path:
+            self.status_bar.showMessage("Save path is not configured for this game.")
+            return False
+        src = Path(cfg.save_path)
+        if not src.exists():
+            self.status_bar.showMessage(f"Save file not found: {src}")
+            return False
+        return True
 
     def _stub(self, action: str):
         def handler():

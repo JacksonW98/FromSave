@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +16,7 @@ _RESERVED = {"meta.json", "notes.txt"}
 @dataclass
 class GameConfig:
     name: str
-    save_path: str
-    save_file: str
+    save_path: str  # full path to the save file, including filename
 
 
 @dataclass
@@ -37,7 +37,7 @@ def load_games() -> list[GameConfig]:
     with open(GAMES_FILE, encoding="utf-8") as f:
         data = json.load(f)
     return [
-        GameConfig(name=name, save_path=cfg.get("save_path", ""), save_file=cfg.get("save_file", ""))
+        GameConfig(name=name, save_path=cfg.get("save_path", ""))
         for name, cfg in data.items()
     ]
 
@@ -66,7 +66,10 @@ def load_slots(game: str, profile: str) -> list[SaveSlot]:
 def _read_slot(slot_dir: Path, game: str, profile: str) -> Optional[SaveSlot]:
     # Find the save file first — folder is only a valid slot if one exists.
     save_file = next(
-        (f.name for f in slot_dir.iterdir() if f.is_file() and f.name not in _RESERVED),
+        (
+            f.name for f in slot_dir.iterdir()
+            if f.is_file() and f.name not in _RESERVED and not f.name.startswith(".")
+        ),
         None,
     )
     if save_file is None:
@@ -128,6 +131,57 @@ def save_notes(slot: SaveSlot, text: str) -> None:
     notes_file = slot.path / "notes.txt"
     notes_file.write_text(text, encoding="utf-8")
     slot.notes = text
+
+
+def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -> SaveSlot:
+    """Copy the game's live save into a new slot folder."""
+    slot_dir = SAVES_DIR / game / profile / slot_name
+    slot_dir.mkdir(parents=True, exist_ok=False)
+
+    src = Path(game_cfg.save_path)
+    shutil.copy2(src, slot_dir / src.name)
+
+    now = datetime.now()
+    meta = {
+        "created": now.isoformat(timespec="seconds"),
+        "modified": now.isoformat(timespec="seconds"),
+    }
+    (slot_dir / "meta.json").write_text(json.dumps(meta, indent=4), encoding="utf-8")
+    (slot_dir / "notes.txt").write_text("", encoding="utf-8")
+
+    return SaveSlot(
+        name=slot_name,
+        game=game,
+        profile=profile,
+        path=slot_dir,
+        date_created=now,
+        date_modified=now,
+        notes="",
+        save_file=src.name,
+    )
+
+
+def replace_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
+    """Overwrite a slot's save file with the game's live save."""
+    src = Path(game_cfg.save_path)
+    shutil.copy2(src, slot.path / slot.save_file)
+    now = datetime.now()
+    _update_meta_modified(slot.path / "meta.json", now)
+    slot.date_modified = now
+
+
+def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
+    """Copy a slot's save file back to the game's save path."""
+    shutil.copy2(slot.path / slot.save_file, Path(game_cfg.save_path))
+
+
+def _update_meta_modified(meta_file: Path, now: datetime) -> None:
+    date_created, _ = _parse_meta(meta_file)
+    meta = {
+        "created": (date_created or now).isoformat(timespec="seconds"),
+        "modified": now.isoformat(timespec="seconds"),
+    }
+    meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
