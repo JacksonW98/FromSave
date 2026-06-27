@@ -114,11 +114,6 @@ class MainWindow(QMainWindow):
 
         bar.addStretch()
 
-        self.hotkey_indicator = QLabel("F5  import   F9  load   F6  read-only")
-        self.hotkey_indicator.setObjectName("hotkeyHint")
-        bar.addWidget(self.hotkey_indicator)
-
-        bar.addSpacing(16)
 
         self.settings_btn = QPushButton("⚙  Settings")
         self.settings_btn.setObjectName("ghostBtn")

@@ -128,11 +128,6 @@ QLabel#mutedLabel {
   font-size: 11px;
   color: #555566;
 }
-QLabel#hotkeyHint {
-  font-size: 11px;
-  color: #6f6f77;
-  letter-spacing: 0.04em;
-}
 QLabel#detailName {
   font-size: 16px;
   font-weight: 600;
