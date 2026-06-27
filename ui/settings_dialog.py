@@ -20,6 +20,7 @@ class SettingsDialog(QDialog):
             confirm_delete=cfg.confirm_delete,
             confirm_replace=cfg.confirm_replace,
             auto_name_imports=cfg.auto_name_imports,
+            show_save_path=cfg.show_save_path,
         )
         self._games = games
         self._path_edits: dict[str, QLineEdit] = {}
@@ -41,8 +42,11 @@ class SettingsDialog(QDialog):
         self._confirm_replace.setChecked(self._cfg.confirm_replace)
         self._confirm_delete = QCheckBox("Confirm before deleting a save")
         self._confirm_delete.setChecked(self._cfg.confirm_delete)
+        self._show_save_path = QCheckBox("Show save path in info panel")
+        self._show_save_path.setChecked(self._cfg.show_save_path)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
+        behaviour_layout.addWidget(self._show_save_path)
         layout.addWidget(behaviour_box)
 
         # Import naming
@@ -102,6 +106,7 @@ class SettingsDialog(QDialog):
         self._cfg.confirm_replace = self._confirm_replace.isChecked()
         self._cfg.confirm_delete = self._confirm_delete.isChecked()
         self._cfg.auto_name_imports = self._auto_name.isChecked()
+        self._cfg.show_save_path = self._show_save_path.isChecked()
         self.accept()
 
     @property

@@ -1,5 +1,6 @@
 {
     "confirm_delete": true,
     "confirm_replace": true,
-    "auto_name_imports": true
+    "auto_name_imports": true,
+    "show_save_path": true
 }

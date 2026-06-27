@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._load_data()
         self.apply_stylesheet()
+        self._apply_path_visibility()
 
     # UI construction
 
@@ -536,7 +537,11 @@ class MainWindow(QMainWindow):
         self.info_save_path.set_value(
             game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—"
         )
+        self._apply_path_visibility()
         self.status_bar.showMessage("Settings saved.")
+
+    def _apply_path_visibility(self) -> None:
+        self.info_save_path.setVisible(self._config.show_save_path)
 
     def _get_game_cfg(self) -> Optional[storage.GameConfig]:
         game_name = self.game_combo.currentText()
