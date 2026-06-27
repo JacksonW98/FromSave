@@ -52,6 +52,7 @@ class SettingsDialog(QDialog):
         # Import naming
         naming_box = QGroupBox("Import naming")
         naming_layout = QVBoxLayout(naming_box)
+        naming_layout.setSpacing(10)
         self._prompt_name = QRadioButton("Always prompt for a name")
         self._auto_name = QRadioButton('Auto-name  (e.g. "new save", "new save 2"…)')
         if self._cfg.auto_name_imports:
