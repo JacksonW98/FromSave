@@ -1,34 +1,16 @@
 import os
+from datetime import datetime
+from typing import Optional
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QColor, QPalette, QFontDatabase
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
-    QToolButton, QSizePolicy, QMessageBox, QAbstractItemView,
-    QGroupBox, QScrollArea,
+    QSizePolicy, QAbstractItemView,
 )
 
-
-# Placeholders TODO add real data loading and saving
-PLACEHOLDER_GAMES = [
-    "Elden Ring",
-    "Elden Ring Nightreign",
-    "Dark Souls III",
-    "Dark Souls Remastered",
-    "Dark Souls II: Scholar of the First Sin",
-    "Sekiro",
-    "Armored Core VI",
-]
-
-PLACEHOLDER_SLOTS = [
-    ("Before Malenia",        "2025-06-14  21:32:05"),
-    ("After Godfrey",         "2025-06-14  19:11:44"),
-    ("RL1 run — Limgrave",    "2025-06-13  15:04:22"),
-    ("pre-Radagon",           "2025-06-12  23:58:01"),
-    ("Fresh start",           "2025-06-10  10:00:00"),
-]
+import storage
 
 
 class MainWindow(QMainWindow):
@@ -38,8 +20,11 @@ class MainWindow(QMainWindow):
         self.resize(920, 580)
         self.setMinimumSize(700, 440)
 
+        self._games = storage.load_games()
+        self._slots: list[storage.SaveSlot] = []
+
         self._build_ui()
-        self._populate_placeholders()
+        self._load_data()
         self.apply_stylesheet()
 
     # UI construction
@@ -51,21 +36,15 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-
-        # Inner content with padding
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(14, 12, 14, 10)
         content_layout.setSpacing(10)
         outer.addWidget(content, 1)
 
-        # Top bar
         content_layout.addLayout(self._build_top_bar())
-
-        # Divider
         content_layout.addWidget(_Divider())
 
-        # Main splitter
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
         splitter.setChildrenCollapsible(False)
@@ -78,13 +57,9 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         content_layout.addWidget(splitter, 1)
 
-        # Divider
         content_layout.addWidget(_Divider())
-
-        # Bottom action bar
         content_layout.addLayout(self._build_action_bar())
 
-        # Status bar
         self.status_bar = QStatusBar()
         self.status_bar.setSizeGripEnabled(True)
         self.setStatusBar(self.status_bar)
@@ -99,10 +74,24 @@ class MainWindow(QMainWindow):
         bar.addWidget(game_label)
 
         self.game_combo = QComboBox()
-        self.game_combo.setMinimumWidth(280)
-        self.game_combo.setMaximumWidth(380)
+        self.game_combo.setMinimumWidth(220)
+        self.game_combo.setMaximumWidth(320)
         self.game_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.game_combo.currentIndexChanged.connect(self._on_game_changed)
         bar.addWidget(self.game_combo)
+
+        bar.addSpacing(12)
+
+        profile_label = QLabel("Profile")
+        profile_label.setObjectName("fieldLabel")
+        bar.addWidget(profile_label)
+
+        self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumWidth(140)
+        self.profile_combo.setMaximumWidth(220)
+        self.profile_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        bar.addWidget(self.profile_combo)
 
         bar.addStretch()
 
@@ -133,10 +122,9 @@ class MainWindow(QMainWindow):
         header.addWidget(lbl)
         header.addStretch()
 
-        slot_count = QLabel("5 slots")
-        slot_count.setObjectName("mutedLabel")
-        self.slot_count_label = slot_count
-        header.addWidget(slot_count)
+        self.slot_count_label = QLabel("0 slots")
+        self.slot_count_label.setObjectName("mutedLabel")
+        header.addWidget(self.slot_count_label)
         layout.addLayout(header)
 
         self.slot_list = QListWidget()
@@ -159,24 +147,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(lbl)
         layout.addSpacing(10)
 
-        # Slot name
-        self.detail_name = QLabel("Before Malenia")
+        self.detail_name = QLabel("—")
         self.detail_name.setObjectName("detailName")
         layout.addWidget(self.detail_name)
 
-        self.detail_time = QLabel("2025-06-14  21:32:05")
+        self.detail_time = QLabel("—")
         self.detail_time.setObjectName("mutedLabel")
         layout.addWidget(self.detail_time)
 
         layout.addSpacing(16)
 
-        # Notes
         notes_lbl = QLabel("Notes")
         notes_lbl.setObjectName("fieldLabel")
         layout.addWidget(notes_lbl)
         layout.addSpacing(4)
 
-        self.detail_notes = QLabel("SL 95, pre-Haligtree. All remembrances collected.")
+        self.detail_notes = QLabel("—")
         self.detail_notes.setObjectName("detailNotes")
         self.detail_notes.setWordWrap(True)
         self.detail_notes.setAlignment(Qt.AlignTop)
@@ -184,7 +170,6 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(24)
 
-        # Game info box
         info_box = QFrame()
         info_box.setObjectName("infoBox")
         info_layout = QVBoxLayout(info_box)
@@ -195,11 +180,11 @@ class MainWindow(QMainWindow):
         info_title.setObjectName("fieldLabel")
         info_layout.addWidget(info_title)
 
-        self.info_save_path = _InfoRow("Save path", "C:\\Users\\You\\AppData\\Roaming\\EldenRing\\")
-        self.info_save_file = _InfoRow("Save file", "ER0000.sl2")
-        self.info_ro_status = _InfoRow("File status", "Writable")
+        self.info_save_path = _InfoRow("Save path", "—")
+        self.info_created = _InfoRow("Created", "—")
+        self.info_ro_status = _InfoRow("File status", "—")
 
-        for row in (self.info_save_path, self.info_save_file, self.info_ro_status):
+        for row in (self.info_save_path, self.info_created, self.info_ro_status):
             info_layout.addWidget(row)
 
         layout.addWidget(info_box)
@@ -227,7 +212,6 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
-        # Read-only toggle
         self.ro_btn = QPushButton("  Toggle read-only  (F6)")
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
@@ -236,31 +220,93 @@ class MainWindow(QMainWindow):
 
         return bar
 
-    # Populate placeholders with dummy data for now, until real data loading is implemented
+    # Data loading
 
-    def _populate_placeholders(self) -> None:
-        for game in PLACEHOLDER_GAMES:
-            self.game_combo.addItem(game)
+    def _load_data(self) -> None:
+        self.game_combo.blockSignals(True)
+        self.game_combo.clear()
+        for game in self._games:
+            self.game_combo.addItem(game.name)
+        self.game_combo.blockSignals(False)
 
-        for name, timestamp in PLACEHOLDER_SLOTS:
+        if self._games:
+            self._on_game_changed(0)
+        else:
+            self.profile_combo.clear()
+            self._reload_slots()
+
+    def _on_game_changed(self, _: int) -> None:
+        game_name = self.game_combo.currentText()
+        profiles = storage.load_profiles(game_name)
+
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for p in profiles:
+            self.profile_combo.addItem(p)
+        self.profile_combo.blockSignals(False)
+
+        game_cfg = next((g for g in self._games if g.name == game_name), None)
+        self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+
+        self._reload_slots()
+
+    def _on_profile_changed(self, _: int) -> None:
+        self._reload_slots()
+
+    def _reload_slots(self) -> None:
+        game_name = self.game_combo.currentText()
+        profile_name = self.profile_combo.currentText()
+
+        self._slots = (
+            storage.load_slots(game_name, profile_name)
+            if game_name and profile_name
+            else []
+        )
+
+        self.slot_list.blockSignals(True)
+        self.slot_list.clear()
+        for slot in self._slots:
+            ts = _fmt_dt(slot.date_modified or slot.date_created)
             item = QListWidgetItem()
-            item.setData(Qt.UserRole, {"name": name, "timestamp": timestamp})
+            item.setData(Qt.UserRole, slot)
             item.setSizeHint(QSize(0, 52))
             self.slot_list.addItem(item)
-            widget = _SlotItem(name, timestamp)
-            self.slot_list.setItemWidget(item, widget)
+            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
+        self.slot_list.blockSignals(False)
 
-        self.slot_list.setCurrentRow(0)
+        count = len(self._slots)
+        self.slot_count_label.setText(f"{count} slot{'s' if count != 1 else ''}")
+
+        if self._slots:
+            self.slot_list.setCurrentRow(0)
+            self._on_slot_selected(0)
+        else:
+            self._clear_detail()
 
     # Event handlers
 
     def _on_slot_selected(self, row: int) -> None:
-        if row < 0 or row >= len(PLACEHOLDER_SLOTS):
+        if row < 0 or row >= len(self._slots):
+            self._clear_detail()
             return
-        name, ts = PLACEHOLDER_SLOTS[row]
-        self.detail_name.setText(name)
-        self.detail_time.setText(ts)
+        slot = self._slots[row]
+        self.detail_name.setText(slot.name)
+        self.detail_time.setText(_fmt_dt(slot.date_modified or slot.date_created))
+        self.detail_notes.setText(slot.notes or "—")
+        self.info_created.set_value(_fmt_dt(slot.date_created))
 
+        if slot.save_file:
+            save_path = slot.path / slot.save_file
+            self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
+        else:
+            self.info_ro_status.set_value("—")
+
+    def _clear_detail(self) -> None:
+        self.detail_name.setText("—")
+        self.detail_time.setText("—")
+        self.detail_notes.setText("—")
+        self.info_created.set_value("—")
+        self.info_ro_status.set_value("—")
 
     def _on_ro_toggled(self, checked: bool) -> None:
         if checked:
@@ -269,29 +315,29 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Save file is now read-only.")
         else:
             self.ro_btn.setText("  Toggle read-only  (F6)")
-            self.info_ro_status.set_value("✏   Writable")
+            self.info_ro_status.set_value("✔   Writable")
             self.status_bar.showMessage("Save file is now writable.")
 
-
     def _stub(self, action: str):
-        """Return a slot that shows a 'not yet implemented' status message."""
         def handler():
             self.status_bar.showMessage(f"[stub] {action} — not yet implemented.")
         return handler
 
-
     def apply_stylesheet(self):
-        # Get the directory where this script is located
         script_dir = os.path.dirname(os.path.abspath(__file__))
         stylesheet_path = os.path.join(script_dir, 'main_window.qtt')
-        
         try:
-            with open(stylesheet_path, 'r') as file:
-                stylesheet = file.read()
-                self.setStyleSheet(stylesheet)
+            with open(stylesheet_path, 'r') as f:
+                self.setStyleSheet(f.read())
         except FileNotFoundError:
             print(f"Style sheet file not found at: {stylesheet_path}")
-            pass
+
+
+def _fmt_dt(dt: Optional[datetime]) -> str:
+    if dt is None:
+        return "—"
+    return dt.strftime("%Y-%m-%d  %H:%M:%S")
+
 
 class _SlotItem(QWidget):
     """Custom widget for each row in the slot list."""
@@ -311,8 +357,7 @@ class _SlotItem(QWidget):
         layout.addWidget(ts_lbl)
 
     def setSelected(self, selected: bool) -> None:
-        color = "#e8e2d8" if selected else "#d4cfc8"
-        bg    = "#1e1e26" if selected else "transparent"
+        bg = "#1e1e26" if selected else "transparent"
         self.setStyleSheet(f"background: {bg};")
 
 
