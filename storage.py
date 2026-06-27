@@ -124,6 +124,12 @@ def _parse_meta(meta_file: Path) -> tuple[Optional[datetime], Optional[datetime]
     return date_created, date_modified
 
 
+def save_notes(slot: SaveSlot, text: str) -> None:
+    notes_file = slot.path / "notes.txt"
+    notes_file.write_text(text, encoding="utf-8")
+    slot.notes = text
+
+
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None

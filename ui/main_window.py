@@ -2,12 +2,12 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
-    QSizePolicy, QAbstractItemView,
+    QSizePolicy, QAbstractItemView, QPlainTextEdit,
 )
 
 import storage
@@ -22,6 +22,12 @@ class MainWindow(QMainWindow):
 
         self._games = storage.load_games()
         self._slots: list[storage.SaveSlot] = []
+        self._current_slot: Optional[storage.SaveSlot] = None
+
+        self._notes_save_timer = QTimer(self)
+        self._notes_save_timer.setSingleShot(True)
+        self._notes_save_timer.setInterval(600)
+        self._notes_save_timer.timeout.connect(self._flush_notes)
 
         self._build_ui()
         self._load_data()
@@ -162,10 +168,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(notes_lbl)
         layout.addSpacing(4)
 
-        self.detail_notes = QLabel("—")
+        self.detail_notes = QPlainTextEdit()
         self.detail_notes.setObjectName("detailNotes")
-        self.detail_notes.setWordWrap(True)
-        self.detail_notes.setAlignment(Qt.AlignTop)
+        self.detail_notes.setPlaceholderText("No notes.")
+        self.detail_notes.setMaximumHeight(110)
+        self.detail_notes.textChanged.connect(self._on_notes_changed)
         layout.addWidget(self.detail_notes)
 
         layout.addSpacing(24)
@@ -286,27 +293,40 @@ class MainWindow(QMainWindow):
     # Event handlers
 
     def _on_slot_selected(self, row: int) -> None:
+        self._flush_notes()
         if row < 0 or row >= len(self._slots):
             self._clear_detail()
             return
         slot = self._slots[row]
+        self._current_slot = slot
         self.detail_name.setText(slot.name)
         self.detail_time.setText(_fmt_dt(slot.date_modified or slot.date_created))
-        self.detail_notes.setText(slot.notes or "—")
+        self.detail_notes.blockSignals(True)
+        self.detail_notes.setPlainText(slot.notes)
+        self.detail_notes.blockSignals(False)
         self.info_created.set_value(_fmt_dt(slot.date_created))
-
-        if slot.save_file:
-            save_path = slot.path / slot.save_file
-            self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
-        else:
-            self.info_ro_status.set_value("—")
+        save_path = slot.path / slot.save_file
+        self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
 
     def _clear_detail(self) -> None:
+        self._current_slot = None
         self.detail_name.setText("—")
         self.detail_time.setText("—")
-        self.detail_notes.setText("—")
+        self.detail_notes.blockSignals(True)
+        self.detail_notes.setPlainText("")
+        self.detail_notes.blockSignals(False)
         self.info_created.set_value("—")
         self.info_ro_status.set_value("—")
+
+    def _on_notes_changed(self) -> None:
+        self._notes_save_timer.start()
+
+    def _flush_notes(self) -> None:
+        self._notes_save_timer.stop()
+        if self._current_slot is None:
+            return
+        storage.save_notes(self._current_slot, self.detail_notes.toPlainText())
+        self.status_bar.showMessage("Notes saved.", 2000)
 
     def _on_ro_toggled(self, checked: bool) -> None:
         if checked:
