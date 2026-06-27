@@ -1,0 +1,186 @@
+/* ── Base ── */
+QMainWindow,
+QWidget {
+  background-color: #16161a;
+  color: #d4cfc8;
+  font-family: "Segoe UI", "SF Pro Text", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+/* ── Combo ── */
+QComboBox {
+  background: #16161a;
+  border: 1px solid #333340;
+  border-radius: 5px;
+  padding: 5px 10px;
+  min-height: 28px;
+  color: #d4cfc8;
+}
+QComboBox:hover {
+  border-color: #b8962e;
+}
+QComboBox::drop-down {
+  border: none;
+  width: 24px;
+}
+QComboBox::down-arrow {
+  width: 0;
+}
+QComboBox QAbstractItemView {
+  background: #16161a;
+  border: 1px solid #333340;
+  padding: 2px;
+}
+
+/* ── Slot list ── */
+QListWidget {
+  background: #16161a;
+  border: 1px solid #2a2a32;
+  border-radius: 6px;
+  outline: none;
+}
+QListWidget::item {
+  border-bottom: 1px solid #111116;
+}
+QListWidget::item:selected {
+  background: #16161a;
+}
+QListWidget::item:hover {
+  background: #1a1a20;
+}
+
+/* ── Buttons — default ── */
+QPushButton {
+  background: #1f1f25;
+  border: 1px solid #333340;
+  border-radius: 5px;
+  padding: 6px 16px;
+  color: #d4cfc8;
+  min-height: 28px;
+}
+QPushButton:hover {
+  background: #2a2a32;
+  border-color: #555566;
+}
+QPushButton:pressed {
+  background: #151518;
+}
+
+/* ── Primary button ── */
+QPushButton#primaryBtn {
+  background: #b8962e;
+  border-color: #b8962e;
+  color: #111;
+  font-weight: 600;
+}
+QPushButton#primaryBtn:hover {
+  background: #cda83a;
+  border-color: #cda83a;
+}
+QPushButton#primaryBtn:pressed {
+  background: #9a7c24;
+}
+
+/* ── Danger button ── */
+QPushButton#dangerBtn {
+  color: #c0605a;
+  border-color: #3a2020;
+}
+QPushButton#dangerBtn:hover {
+  background: #2a1818;
+  border-color: #c0605a;
+  color: #d97070;
+}
+
+/* ── Ghost button ── */
+QPushButton#ghostBtn {
+  background: transparent;
+  border-color: #2a2a32;
+  color: #888899;
+}
+QPushButton#ghostBtn:hover {
+  background: #1f1f25;
+  border-color: #444455;
+  color: #d4cfc8;
+}
+QPushButton#ghostBtn:checked {
+  background: #2a1f0a;
+  border-color: #b8962e;
+  color: #b8962e;
+}
+
+/* ── Labels ── */
+QLabel {
+  background-color: transparent;
+}
+
+QLabel#panelHeader {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #555566;
+}
+QLabel#fieldLabel {
+  font-size: 11px;
+  color: #666677;
+  font-weight: 500;
+}
+QLabel#mutedLabel {
+  font-size: 11px;
+  color: #555566;
+}
+QLabel#hotkeyHint {
+  font-size: 11px;
+  color: #6f6f77;
+  letter-spacing: 0.04em;
+}
+QLabel#detailName {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e8e2d8;
+}
+QLabel#detailNotes {
+  color: #888899;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Info box ── */
+QFrame#infoBox {
+  background: #16161a;
+  border: 1px solid #2a2a32;
+  border-radius: 6px;
+}
+
+/* ── Splitter handle ── */
+QSplitter::handle {
+  background: #2a2a32;
+}
+
+/* ── Status bar ── */
+QStatusBar {
+  background: #16161a;
+  color: #555566;
+  font-size: 11px;
+  border-top: 1px solid #2a2a32;
+}
+
+/* ── Scrollbar ── */
+QScrollBar:vertical {
+  background: #16161a;
+  width: 6px;
+  border: none;
+}
+QScrollBar::handle:vertical {
+  background: #333340;
+  border-radius: 3px;
+  min-height: 20px;
+}
+QScrollBar::handle:vertical:hover {
+  background: #555566;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+  height: 0;
+}
