@@ -175,6 +175,18 @@ def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
     shutil.copy2(slot.path / slot.save_file, Path(game_cfg.save_path))
 
 
+def create_profile(game: str, name: str) -> None:
+    (SAVES_DIR / game / name).mkdir(parents=True, exist_ok=False)
+
+
+def rename_profile(game: str, old_name: str, new_name: str) -> None:
+    (SAVES_DIR / game / old_name).rename(SAVES_DIR / game / new_name)
+
+
+def delete_profile(game: str, name: str) -> None:
+    shutil.rmtree(SAVES_DIR / game / name)
+
+
 def delete_slot(slot: SaveSlot) -> None:
     """Permanently delete a slot directory and all its contents."""
     shutil.rmtree(slot.path)

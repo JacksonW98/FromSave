@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 import config
 import storage
+from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
 
 
@@ -102,6 +103,13 @@ class MainWindow(QMainWindow):
         self.profile_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         bar.addWidget(self.profile_combo)
+
+        self.manage_profiles_btn = QPushButton("···")
+        self.manage_profiles_btn.setObjectName("ghostBtn")
+        self.manage_profiles_btn.setFixedWidth(48)
+        self.manage_profiles_btn.setToolTip("Manage profiles")
+        self.manage_profiles_btn.clicked.connect(self._on_manage_profiles)
+        bar.addWidget(self.manage_profiles_btn)
 
         bar.addStretch()
 
@@ -472,6 +480,24 @@ class MainWindow(QMainWindow):
         else:
             self._clear_detail()
         self.status_bar.showMessage(f"Deleted '{slot.name}'.")
+
+    def _on_manage_profiles(self) -> None:
+        game = self.game_combo.currentText()
+        if not game:
+            return
+        previous = self.profile_combo.currentText()
+        ProfilesDialog(game, self).exec()
+        self._flush_notes()
+        self._current_slot = None
+        profiles = storage.load_profiles(game)
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for p in profiles:
+            self.profile_combo.addItem(p)
+        self.profile_combo.blockSignals(False)
+        idx = self.profile_combo.findText(previous)
+        self.profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._reload_slots()
 
     def _on_rename_slot(self) -> None:
         row = self.slot_list.currentRow()
