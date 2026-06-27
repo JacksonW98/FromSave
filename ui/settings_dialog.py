@@ -1,3 +1,5 @@
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
@@ -22,7 +24,10 @@ class SettingsDialog(QDialog):
         self._games = games
         self._path_edits: dict[str, QLineEdit] = {}
         self._build_ui()
-        self.setStyleSheet("QCheckBox { background: transparent; } QRadioButton { background: transparent; }")
+        ui_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+        qss_path = os.path.join(ui_dir, "settings_dialog.qss")
+        with open(qss_path, "r") as f:
+            self.setStyleSheet(f.read().replace("{ui_dir}", ui_dir))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)

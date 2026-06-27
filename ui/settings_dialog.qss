@@ -1,0 +1,65 @@
+QDialog, QGroupBox {
+  background-color: #16161a;
+  color: #d4cfc8;
+}
+
+QGroupBox {
+  border: 1px solid #2a2a32;
+  border-radius: 6px;
+  margin-top: 10px;
+  padding-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888899;
+}
+
+QGroupBox::title {
+  subcontrol-origin: margin;
+  subcontrol-position: top left;
+  left: 10px;
+  top: 1px;
+}
+
+QCheckBox, QRadioButton {
+  background: transparent;
+  color: #d4cfc8;
+  spacing: 8px;
+  font-size: 13px;
+}
+
+QCheckBox::indicator {
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid #555566;
+  border-radius: 3px;
+  background: #1f1f25;
+}
+
+QCheckBox::indicator:hover {
+  border-color: #b8962e;
+}
+
+QCheckBox::indicator:checked {
+  background: #b8962e;
+  border-color: #b8962e;
+  image: url({ui_dir}/check.svg);
+}
+
+QRadioButton::indicator {
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid #555566;
+  border-radius: 8px;
+  background: #1f1f25;
+}
+
+QRadioButton::indicator:hover {
+  border-color: #b8962e;
+}
+
+QRadioButton::indicator:checked {
+  border: 1.5px solid #b8962e;
+  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+    stop:0 #b8962e, stop:0.38 #b8962e,
+    stop:0.45 #1f1f25, stop:1 #1f1f25);
+}
