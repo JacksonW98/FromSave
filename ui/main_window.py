@@ -394,11 +394,13 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._reattach_slot_widgets)
 
     def _reattach_slot_widgets(self) -> None:
+        compact = self._config.compact_list
         for i in range(self.slot_list.count()):
             item = self.slot_list.item(i)
             slot = item.data(Qt.UserRole)
             ts = _fmt_dt(slot.date_modified or slot.date_created)
-            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
+            item.setSizeHint(QSize(0, 34 if compact else 52))
+            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, compact))
 
     def _reload_slots(self, select_slot: str = "") -> None:
         game_name = self.game_combo.currentText()
@@ -431,6 +433,7 @@ class MainWindow(QMainWindow):
         )
         self.sort_dir_btn.setEnabled(not is_custom)
 
+        compact = self._config.compact_list
         self._slots = slots
         self.slot_list.blockSignals(True)
         self.slot_list.clear()
@@ -438,9 +441,9 @@ class MainWindow(QMainWindow):
             ts = _fmt_dt(slot.date_modified or slot.date_created)
             item = QListWidgetItem()
             item.setData(Qt.UserRole, slot)
-            item.setSizeHint(QSize(0, 52))
+            item.setSizeHint(QSize(0, 34 if compact else 52))
             self.slot_list.addItem(item)
-            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
+            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, compact))
         self.slot_list.blockSignals(False)
 
         count = len(self._slots)
@@ -695,7 +698,7 @@ class MainWindow(QMainWindow):
             return
         item = self.slot_list.item(row)
         ts = _fmt_dt(slot.date_modified or slot.date_created)
-        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
+        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, self._config.compact_list))
         self.detail_name.setText(slot.name)
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
@@ -975,19 +978,20 @@ def _fmt_dt(dt: Optional[datetime]) -> str:
 class _SlotItem(QWidget):
     """Custom widget for each row in the slot list."""
 
-    def __init__(self, name: str, timestamp: str) -> None:
+    def __init__(self, name: str, timestamp: str, compact: bool = False) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 6 if compact else 8, 12, 6 if compact else 8)
         layout.setSpacing(2)
 
         name_lbl = QLabel(name)
         name_lbl.setStyleSheet("font-size: 13px; font-weight: 500; color: #d4cfc8;")
         layout.addWidget(name_lbl)
 
-        ts_lbl = QLabel(timestamp)
-        ts_lbl.setStyleSheet("font-size: 11px; color: #555566;")
-        layout.addWidget(ts_lbl)
+        if not compact:
+            ts_lbl = QLabel(timestamp)
+            ts_lbl.setStyleSheet("font-size: 11px; color: #555566;")
+            layout.addWidget(ts_lbl)
 
     def setSelected(self, selected: bool) -> None:
         bg = "#1e1e26" if selected else "transparent"

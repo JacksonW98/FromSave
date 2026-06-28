@@ -10,5 +10,7 @@
     "last_slot": "",
     "hotkey_import": "F5",
     "hotkey_load": "F9",
-    "hotkey_ro_toggle": "F6"
+    "hotkey_ro_toggle": "F6",
+    "soft_delete": true,
+    "compact_list": true
 }
