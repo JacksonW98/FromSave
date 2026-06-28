@@ -341,7 +341,8 @@ class MainWindow(QMainWindow):
         self._config.slot_sort = mode
         self.sort_dir_btn.setEnabled(mode != "custom")
         config.save_config(self._config)
-        self._reload_slots()
+        prev_slot = self._current_slot.name if self._current_slot else ""
+        self._reload_slots(prev_slot)
         if mode == "custom":
             self.status_bar.showMessage("Custom order — drag slots to rearrange.", 4000)
 
@@ -351,7 +352,8 @@ class MainWindow(QMainWindow):
             self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc
         )
         config.save_config(self._config)
-        self._reload_slots()
+        prev_slot = self._current_slot.name if self._current_slot else ""
+        self._reload_slots(prev_slot)
 
     def _on_rows_moved(self, *_) -> None:
         if self._config.slot_sort != "custom":
@@ -638,22 +640,25 @@ class MainWindow(QMainWindow):
         ts = _fmt_dt(slot.date_modified or slot.date_created)
         self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
         self.detail_name.setText(slot.name)
-        if self._config.slot_sort == "custom":
-            storage.save_slot_order(
-                self.game_combo.currentText(),
-                self.profile_combo.currentText(),
-                [s.name for s in self._slots],
-            )
+        game_name = self.game_combo.currentText()
+        profile_name = self.profile_combo.currentText()
+        # Keep order.json in sync whenever it already exists, so the renamed slot
+        # stays in position even if the user is not currently in Custom sort mode.
+        if self._config.slot_sort == "custom" or storage.load_slot_order(game_name, profile_name):
+            storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
         self.status_bar.showMessage(f"Renamed to '{slot.name}'.")
 
     def _on_open_settings(self) -> None:
+        prev_game = self.game_combo.currentText()
+        prev_profile = self.profile_combo.currentText()
+        prev_slot = self._current_slot.name if self._current_slot else ""
+
         dlg = SettingsDialog(self._config, self._games, self)
         if not dlg.exec():
             return
+
         self._config = dlg.result_config
         config.save_config(self._config)
-
-        prev_game = self.game_combo.currentText()
         self._games = dlg.result_games
         storage.save_games(self._games)
 
@@ -664,11 +669,25 @@ class MainWindow(QMainWindow):
         self.game_combo.blockSignals(False)
 
         if self._games:
-            idx = self.game_combo.findText(prev_game)
-            if idx < 0:
-                idx = 0
-            self.game_combo.setCurrentIndex(idx)
-            self._on_game_changed(idx)
+            game_idx = max(0, self.game_combo.findText(prev_game))
+            self.game_combo.setCurrentIndex(game_idx)
+
+            game_name = self.game_combo.currentText()
+            profiles = storage.load_profiles(game_name)
+            self.profile_combo.blockSignals(True)
+            self.profile_combo.clear()
+            for p in profiles:
+                self.profile_combo.addItem(p)
+            self.profile_combo.blockSignals(False)
+
+            if profiles:
+                profile_idx = max(0, self.profile_combo.findText(prev_profile))
+                self.profile_combo.setCurrentIndex(profile_idx)
+
+            game_cfg = self._get_game_cfg()
+            self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+
+            self._reload_slots(prev_slot)
         else:
             self.profile_combo.blockSignals(True)
             self.profile_combo.clear()
