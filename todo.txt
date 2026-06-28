@@ -4,6 +4,7 @@ batch delete (maybe)
 show file size in info box
 auto backup features
 deleted save recovery?
+hotkeys
 
 Added:
 Right click dialogue
