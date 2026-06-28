@@ -16,6 +16,9 @@ class Config:
     last_game: str = ""
     last_profile: str = ""
     last_slot: str = ""
+    hotkey_import: str = "F5"
+    hotkey_load: str = "F9"
+    hotkey_ro_toggle: str = "F6"
 
 
 def load_config() -> Config:
@@ -34,6 +37,9 @@ def load_config() -> Config:
             last_game=data.get("last_game", ""),
             last_profile=data.get("last_profile", ""),
             last_slot=data.get("last_slot", ""),
+            hotkey_import=data.get("hotkey_import", "F5"),
+            hotkey_load=data.get("hotkey_load", "F9"),
+            hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
         )
     except (json.JSONDecodeError, OSError):
         return Config()

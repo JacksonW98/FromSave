@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
@@ -16,6 +16,17 @@ import config
 import storage
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
+
+
+def _hotkey_label(key: str) -> str:
+    if not key:
+        return ""
+    return QKeySequence(key).toString(QKeySequence.NativeText) or key
+
+
+def _btn_text(base: str, key: str) -> str:
+    label = _hotkey_label(key)
+    return f"{base}  ({label})" if label else base
 
 
 class MainWindow(QMainWindow):
@@ -39,6 +50,7 @@ class MainWindow(QMainWindow):
         self._load_data()
         self.apply_stylesheet()
         self._apply_path_visibility()
+        self._apply_hotkeys()
 
     # UI construction
 
@@ -246,14 +258,14 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.setSpacing(6)
 
-        self.import_btn = QPushButton("Import Save  (F5)")
+        self.import_btn = QPushButton(_btn_text("Import Save", self._config.hotkey_import))
         self.import_btn.setObjectName("primaryBtn")
         self.import_btn.clicked.connect(self._on_import_save)
 
         self.replace_btn = QPushButton("Replace Save")
         self.replace_btn.clicked.connect(self._on_replace_save)
 
-        self.load_btn = QPushButton("Load Save  (F9)")
+        self.load_btn = QPushButton(_btn_text("Load Save", self._config.hotkey_load))
         self.load_btn.clicked.connect(self._on_load_save)
 
         self.delete_btn = QPushButton("Delete slot")
@@ -266,7 +278,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
-        self.ro_btn = QPushButton("  Toggle read-only  (F6)")
+        self.ro_btn = QPushButton(_btn_text("  Toggle read-only", self._config.hotkey_ro_toggle))
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
         self.ro_btn.setEnabled(False)
@@ -459,14 +471,14 @@ class MainWindow(QMainWindow):
             self.info_ro_status.set_value("Read-only" if is_ro else "Writable")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(is_ro)
-            self.ro_btn.setText("Read-only ON  (F6)" if is_ro else "  Toggle read-only  (F6)")
+            self.ro_btn.setText(self._ro_btn_text(is_ro))
             self.ro_btn.blockSignals(False)
             self.ro_btn.setEnabled(True)
         else:
             self.info_ro_status.set_value("—")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(False)
-            self.ro_btn.setText("  Toggle read-only  (F6)")
+            self.ro_btn.setText(self._ro_btn_text(False))
             self.ro_btn.blockSignals(False)
             self.ro_btn.setEnabled(False)
 
@@ -482,7 +494,7 @@ class MainWindow(QMainWindow):
         self.info_ro_status.set_value("—")
         self.ro_btn.blockSignals(True)
         self.ro_btn.setChecked(False)
-        self.ro_btn.setText("  Toggle read-only  (F6)")
+        self.ro_btn.setText(self._ro_btn_text(False))
         self.ro_btn.blockSignals(False)
         self.ro_btn.setEnabled(False)
 
@@ -504,12 +516,12 @@ class MainWindow(QMainWindow):
             mode = save_path.stat().st_mode
             if checked:
                 os.chmod(save_path, mode & ~0o222)  # remove all write bits
-                self.ro_btn.setText("Read-only ON  (F6)")
+                self.ro_btn.setText(self._ro_btn_text(True))
                 self.info_ro_status.set_value("Read-only")
                 self.status_bar.showMessage(f"'{self._current_slot.save_file}' locked read-only.")
             else:
                 os.chmod(save_path, mode | 0o200)   # restore user write bit
-                self.ro_btn.setText("  Toggle read-only  (F6)")
+                self.ro_btn.setText(self._ro_btn_text(False))
                 self.info_ro_status.set_value("Writable")
                 self.status_bar.showMessage(f"'{self._current_slot.save_file}' is now writable.")
         except OSError as e:
@@ -819,7 +831,35 @@ class MainWindow(QMainWindow):
             self._reload_slots()
 
         self._apply_path_visibility()
+        self._apply_hotkeys()
         self.status_bar.showMessage("Settings saved.")
+
+    def _ro_btn_text(self, is_on: bool) -> str:
+        key = _hotkey_label(self._config.hotkey_ro_toggle)
+        if is_on:
+            return _btn_text("Read-only ON", key)
+        return _btn_text("  Toggle read-only", key)
+
+    def _apply_hotkeys(self) -> None:
+        for sc in getattr(self, "_shortcuts", []):
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._shortcuts: list[QShortcut] = []
+
+        def _bind(key: str, slot) -> None:
+            if key:
+                sc = QShortcut(QKeySequence(key), self)
+                sc.activated.connect(slot)
+                self._shortcuts.append(sc)
+
+        cfg = self._config
+        _bind(cfg.hotkey_import, self._on_import_save)
+        _bind(cfg.hotkey_load, self._on_load_save)
+        _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
+
+        self.import_btn.setText(_btn_text("Import Save", cfg.hotkey_import))
+        self.load_btn.setText(_btn_text("Load Save", cfg.hotkey_load))
+        self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
     def _apply_path_visibility(self) -> None:
         self.info_save_path.setVisible(self._config.show_save_path)

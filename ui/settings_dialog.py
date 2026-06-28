@@ -1,10 +1,11 @@
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
-    QRadioButton, QFileDialog, QMessageBox,
+    QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit,
 )
 
 import config
@@ -22,6 +23,9 @@ class SettingsDialog(QDialog):
             confirm_replace=cfg.confirm_replace,
             auto_name_imports=cfg.auto_name_imports,
             show_save_path=cfg.show_save_path,
+            hotkey_import=cfg.hotkey_import,
+            hotkey_load=cfg.hotkey_load,
+            hotkey_ro_toggle=cfg.hotkey_ro_toggle,
         )
         self._game_entries: list[dict] = []
         self._build_ui()
@@ -65,6 +69,16 @@ class SettingsDialog(QDialog):
         naming_layout.addWidget(self._auto_name)
         layout.addWidget(naming_box)
 
+        # Hotkeys
+        hotkeys_box = QGroupBox("Hotkeys")
+        hotkeys_layout = QVBoxLayout(hotkeys_box)
+        hotkeys_layout.setSpacing(6)
+
+        self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
+        self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
+        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Toggle read-only", self._cfg.hotkey_ro_toggle)
+        layout.addWidget(hotkeys_box)
+
         # Game save paths
         paths_box = QGroupBox("Game save paths")
         paths_outer = QVBoxLayout(paths_box)
@@ -93,6 +107,31 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(save_btn)
         layout.addLayout(btn_row)
+
+    def _make_hotkey_row(self, parent_layout: QVBoxLayout, label: str, current: str) -> QKeySequenceEdit:
+        row = QWidget()
+        row.setStyleSheet("background: transparent;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        lbl = QLabel(label)
+        lbl.setFixedWidth(130)
+        row_layout.addWidget(lbl)
+
+        editor = QKeySequenceEdit(QKeySequence(current))
+        editor.setMaximumWidth(160)
+        row_layout.addWidget(editor)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedWidth(60)
+        clear_btn.setObjectName("ghostBtn")
+        clear_btn.clicked.connect(editor.clear)
+        row_layout.addWidget(clear_btn)
+
+        row_layout.addStretch()
+        parent_layout.addWidget(row)
+        return editor
 
     def _add_game_row(self, name: str, mode: str, path: str) -> None:
         entry: dict = {"name": name, "mode": mode}
@@ -166,6 +205,9 @@ class SettingsDialog(QDialog):
         self._cfg.confirm_delete = self._confirm_delete.isChecked()
         self._cfg.auto_name_imports = self._auto_name.isChecked()
         self._cfg.show_save_path = self._show_save_path.isChecked()
+        self._cfg.hotkey_import = self._hk_import.keySequence().toString()
+        self._cfg.hotkey_load = self._hk_load.keySequence().toString()
+        self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
         self.accept()
 
     @property
