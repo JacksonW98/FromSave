@@ -30,7 +30,7 @@ class SettingsDialog(QDialog):
         self._game_entries: list[dict] = []
         self._build_ui()
         for game in games:
-            self._add_game_row(game.name, game.save_mode, game.save_path)
+            self._add_game_row(game.name, game.save_mode, game.save_path, game.save_paths)
         ui_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
         qss_path = os.path.join(ui_dir, "settings_dialog.qss")
         with open(qss_path, "r") as f:
@@ -133,7 +133,7 @@ class SettingsDialog(QDialog):
         parent_layout.addWidget(row)
         return editor
 
-    def _add_game_row(self, name: str, mode: str, path: str) -> None:
+    def _add_game_row(self, name: str, mode: str, path: str = "", save_paths: list[str] | None = None) -> None:
         entry: dict = {"name": name, "mode": mode}
 
         row = QWidget()
@@ -147,12 +147,17 @@ class SettingsDialog(QDialog):
         mode_labels = {"file": "file", "files": "files", "folder": "folder"}
         lbl.setToolTip(f"Save type: {mode_labels.get(mode, mode)}")
 
-        edit = QLineEdit(path)
-        placeholder = "Path to save file…" if mode == "file" else "Path to save folder…"
-        edit.setPlaceholderText(placeholder)
-
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setFixedWidth(90)
+        if mode == "files":
+            initial_text = "; ".join(save_paths) if save_paths else path
+            edit = QLineEdit(initial_text)
+            edit.setPlaceholderText("Paths separated by  ;  — use 'Add files…' to browse")
+            browse_btn = QPushButton("Add files…")
+            browse_btn.setFixedWidth(100)
+        else:
+            edit = QLineEdit(path)
+            edit.setPlaceholderText("Path to save file…" if mode == "file" else "Path to save folder…")
+            browse_btn = QPushButton("Browse…")
+            browse_btn.setFixedWidth(90)
         browse_btn.clicked.connect(self._make_browse(edit, mode))
 
         del_btn = QPushButton("×")
@@ -184,6 +189,7 @@ class SettingsDialog(QDialog):
         if any(e["name"] == name for e in self._game_entries):
             QMessageBox.warning(self, "Duplicate", f"'{name}' is already in the list.")
             return
+        # For "files" mode, path is already a "; "-separated string from AddGameDialog
         self._add_game_row(name, mode, path)
 
     def _make_browse(self, edit: QLineEdit, mode: str):
@@ -192,12 +198,20 @@ class SettingsDialog(QDialog):
                 path, _ = QFileDialog.getOpenFileName(
                     self, "Select save file", edit.text() or ""
                 )
+                if path:
+                    edit.setText(path)
+            elif mode == "files":
+                paths, _ = QFileDialog.getOpenFileNames(self, "Select save files", "")
+                if paths:
+                    existing = [p.strip() for p in edit.text().split(";") if p.strip()]
+                    merged = existing + [p for p in paths if p not in existing]
+                    edit.setText("; ".join(merged))
             else:
                 path = QFileDialog.getExistingDirectory(
                     self, "Select save folder", edit.text() or ""
                 )
-            if path:
-                edit.setText(path)
+                if path:
+                    edit.setText(path)
         return handler
 
     def _on_save(self) -> None:
@@ -216,11 +230,17 @@ class SettingsDialog(QDialog):
 
     @property
     def result_games(self) -> list[storage.GameConfig]:
-        return [
-            storage.GameConfig(
-                name=e["name"],
-                save_path=e["edit"].text().strip(),
-                save_mode=e["mode"],
-            )
-            for e in self._game_entries
-        ]
+        result = []
+        for e in self._game_entries:
+            if e["mode"] == "files":
+                paths = [p.strip() for p in e["edit"].text().split(";") if p.strip()]
+                result.append(storage.GameConfig(
+                    name=e["name"], save_path="", save_mode="files", save_paths=paths,
+                ))
+            else:
+                result.append(storage.GameConfig(
+                    name=e["name"],
+                    save_path=e["edit"].text().strip(),
+                    save_mode=e["mode"],
+                ))
+        return result

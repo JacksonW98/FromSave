@@ -334,7 +334,7 @@ class MainWindow(QMainWindow):
 
         # Update game info panel
         game_cfg = self._get_game_cfg()
-        self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+        self.info_save_path.set_value(_game_path_display(game_cfg))
 
         # Load slots, restoring last selected slot
         self._reload_slots(self._config.last_slot)
@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
         self.profile_combo.blockSignals(False)
 
         game_cfg = next((g for g in self._games if g.name == game_name), None)
-        self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+        self.info_save_path.set_value(_game_path_display(game_cfg))
 
         self._reload_slots()
 
@@ -476,9 +476,9 @@ class MainWindow(QMainWindow):
         self.info_created.set_value(_fmt_dt(slot.date_created))
         size = _slot_save_size(slot)
         self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
-        if slot.save_file:
-            save_path = slot.path / slot.save_file
-            is_ro = not os.access(save_path, os.W_OK)
+        save_files = _slot_save_files(slot)
+        if save_files:
+            is_ro = all(not os.access(f, os.W_OK) for f in save_files)
             self.info_ro_status.set_value("Read-only" if is_ro else "Writable")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(is_ro)
@@ -521,21 +521,22 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Notes saved.", 2000)
 
     def _on_ro_toggled(self, checked: bool) -> None:
-        if not self._current_slot or not self._current_slot.save_file:
+        if not self._current_slot:
             return
-        save_path = self._current_slot.path / self._current_slot.save_file
+        save_files = _slot_save_files(self._current_slot)
+        if not save_files:
+            return
         try:
-            mode = save_path.stat().st_mode
-            if checked:
-                os.chmod(save_path, mode & ~0o222)  # remove all write bits
-                self.ro_btn.setText(self._ro_btn_text(True))
-                self.info_ro_status.set_value("Read-only")
-                self.status_bar.showMessage(f"'{self._current_slot.save_file}' locked read-only.")
-            else:
-                os.chmod(save_path, mode | 0o200)   # restore user write bit
-                self.ro_btn.setText(self._ro_btn_text(False))
-                self.info_ro_status.set_value("Writable")
-                self.status_bar.showMessage(f"'{self._current_slot.save_file}' is now writable.")
+            for f in save_files:
+                mode = f.stat().st_mode
+                os.chmod(f, (mode & ~0o222) if checked else (mode | 0o200))
+            n = len(save_files)
+            label = save_files[0].name if n == 1 else f"{n} files"
+            self.ro_btn.setText(self._ro_btn_text(checked))
+            self.info_ro_status.set_value("Read-only" if checked else "Writable")
+            self.status_bar.showMessage(
+                f"'{label}' {'locked read-only' if checked else 'is now writable'}."
+            )
         except OSError as e:
             self.status_bar.showMessage(f"Failed to change permissions: {e}")
             self.ro_btn.blockSignals(True)
@@ -578,7 +579,7 @@ class MainWindow(QMainWindow):
         if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
-        if slot.save_file and not os.access(slot.path / slot.save_file, os.W_OK):
+        if any(not os.access(f, os.W_OK) for f in _slot_save_files(slot)):
             self.status_bar.showMessage(f"'{slot.name}' is read-only — unlock it before replacing.")
             return
         if self._config.confirm_replace:
@@ -606,10 +607,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No slot selected.")
             return
         cfg = self._get_game_cfg()
-        if not cfg:
-            return
-        if not cfg.save_path:
-            self.status_bar.showMessage("Save path is not configured for this game.")
+        if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
         try:
@@ -833,7 +831,7 @@ class MainWindow(QMainWindow):
                 self.profile_combo.setCurrentIndex(profile_idx)
 
             game_cfg = self._get_game_cfg()
-            self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+            self.info_save_path.set_value(_game_path_display(game_cfg))
 
             self._reload_slots(prev_slot)
         else:
@@ -887,6 +885,15 @@ class MainWindow(QMainWindow):
         return next((g for g in self._games if g.name == game_name), None)
 
     def _validate_game_save_path(self, cfg: storage.GameConfig) -> bool:
+        if cfg.save_mode == "files":
+            if not cfg.save_paths:
+                self.status_bar.showMessage("No save files configured for this game.")
+                return False
+            missing = [p for p in cfg.save_paths if not Path(p).exists()]
+            if missing:
+                self.status_bar.showMessage(f"Save file not found: {missing[0]}")
+                return False
+            return True
         if not cfg.save_path:
             self.status_bar.showMessage("Save path is not configured for this game.")
             return False
@@ -918,6 +925,26 @@ class MainWindow(QMainWindow):
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
             print(f"Style sheet file not found at: {stylesheet_path}")
+
+
+def _game_path_display(cfg: Optional[storage.GameConfig]) -> str:
+    if not cfg:
+        return "—"
+    if cfg.save_mode == "files":
+        n = len(cfg.save_paths)
+        return f"{n} file{'s' if n != 1 else ''}" if n else "—"
+    return cfg.save_path or "—"
+
+
+def _slot_save_files(slot: storage.SaveSlot) -> list[Path]:
+    """Return all save files for a slot, regardless of save mode."""
+    save_data = slot.path / "save_data"
+    if save_data.exists():
+        return [f for f in save_data.rglob("*") if f.is_file()]
+    return [
+        f for f in slot.path.iterdir()
+        if f.is_file() and f.name not in storage._RESERVED and not f.name.startswith(".")
+    ]
 
 
 def _slot_save_size(slot: storage.SaveSlot) -> Optional[int]:

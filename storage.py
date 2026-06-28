@@ -1,7 +1,7 @@
 import json
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,8 +16,9 @@ _RESERVED = {"meta.json", "notes.txt"}
 @dataclass
 class GameConfig:
     name: str
-    save_path: str
-    save_mode: str = "file"  # "file" | "files" | "folder"
+    save_path: str                           # used by "file" and "folder" modes
+    save_mode: str = "file"                  # "file" | "files" | "folder"
+    save_paths: list[str] = field(default_factory=list)  # used by "files" mode
 
 
 @dataclass
@@ -42,6 +43,7 @@ def load_games() -> list[GameConfig]:
             name=name,
             save_path=cfg.get("save_path", ""),
             save_mode=cfg.get("save_mode", "file"),
+            save_paths=cfg.get("save_paths", []),
         )
         for name, cfg in data.items()
     ]
@@ -162,10 +164,10 @@ def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -
         shutil.copy2(src, slot_dir / src.name)
         save_file = src.name
     elif mode == "files":
-        src_dir = Path(game_cfg.save_path)
-        for f in src_dir.iterdir():
-            if f.is_file() and not f.name.startswith("."):
-                shutil.copy2(f, slot_dir / f.name)
+        for path_str in game_cfg.save_paths:
+            src = Path(path_str)
+            if src.is_file():
+                shutil.copy2(src, slot_dir / src.name)
     elif mode == "folder":
         shutil.copytree(Path(game_cfg.save_path), slot_dir / "save_data")
 
@@ -197,13 +199,10 @@ def replace_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
         src = Path(game_cfg.save_path)
         shutil.copy2(src, slot.path / slot.save_file)
     elif mode == "files":
-        for f in slot.path.iterdir():
-            if f.is_file() and f.name not in _RESERVED and not f.name.startswith("."):
-                f.unlink()
-        src_dir = Path(game_cfg.save_path)
-        for f in src_dir.iterdir():
-            if f.is_file() and not f.name.startswith("."):
-                shutil.copy2(f, slot.path / f.name)
+        for path_str in game_cfg.save_paths:
+            src = Path(path_str)
+            if src.is_file():
+                shutil.copy2(src, slot.path / src.name)
     elif mode == "folder":
         save_data = slot.path / "save_data"
         if save_data.exists():
@@ -222,10 +221,11 @@ def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
     if mode == "file":
         shutil.copy2(slot.path / slot.save_file, Path(game_cfg.save_path))
     elif mode == "files":
-        dest_dir = Path(game_cfg.save_path)
-        for f in slot.path.iterdir():
-            if f.is_file() and f.name not in _RESERVED and not f.name.startswith("."):
-                shutil.copy2(f, dest_dir / f.name)
+        for path_str in game_cfg.save_paths:
+            dst = Path(path_str)
+            slot_file = slot.path / dst.name
+            if slot_file.exists():
+                shutil.copy2(slot_file, dst)
     elif mode == "folder":
         dest = Path(game_cfg.save_path)
         if dest.exists():
@@ -309,10 +309,12 @@ def copy_slot_to_profile(slot: SaveSlot, target_profile: str, new_name: str) -> 
 
 def save_games(games: list[GameConfig]) -> None:
     """Write updated game configs back to games.json."""
-    data = {
-        g.name: {"save_path": g.save_path, "save_mode": g.save_mode}
-        for g in games
-    }
+    data = {}
+    for g in games:
+        if g.save_mode == "files":
+            data[g.name] = {"save_mode": "files", "save_paths": g.save_paths}
+        else:
+            data[g.name] = {"save_mode": g.save_mode, "save_path": g.save_path}
     with open(GAMES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
