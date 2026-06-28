@@ -4,7 +4,7 @@ batch delete (maybe)
 show file size in info box
 auto backup features
 deleted save recovery?
-hotkeys
+
 
 Added:
 Right click dialogue
@@ -14,3 +14,4 @@ Copy/move a save to another profile
 
 Needs testing:
 read-only toggle
+hotkeys
