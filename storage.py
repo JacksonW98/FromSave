@@ -242,7 +242,8 @@ def rename_profile(game: str, old_name: str, new_name: str) -> None:
 
 
 def delete_profile(game: str, name: str) -> None:
-    shutil.rmtree(SAVES_DIR / game / name)
+    import send2trash
+    send2trash.send2trash(str(SAVES_DIR / game / name))
 
 
 def delete_slot(slot: SaveSlot, soft: bool = False) -> None:
