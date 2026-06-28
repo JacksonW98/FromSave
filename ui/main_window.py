@@ -50,6 +50,9 @@ class MainWindow(QMainWindow):
         self._guard_slot: Optional[storage.SaveSlot] = None
         self._guard_cfg: Optional[storage.GameConfig] = None
 
+        self._confirm_dialog: Optional[QMessageBox] = None
+        self._confirm_action: Optional[str] = None  # "replace" | "delete"
+
         self._global_hotkeys = GlobalHotkeyListener(self)
 
         self._build_ui()
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
 
         self._global_hotkeys.import_triggered.connect(self._on_import_save)
         self._global_hotkeys.load_triggered.connect(self._on_load_save)
+        self._global_hotkeys.replace_triggered.connect(self._on_replace_save)
         self._global_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
 
         self._load_data()
@@ -608,6 +612,32 @@ class MainWindow(QMainWindow):
         self._reload_slots(name)
         self.status_bar.showMessage(f"Imported '{name}'.")
 
+    def _confirm(self, action: str, title: str, message: str) -> bool:
+        """Show a Yes/No dialog, allowing the same hotkey to confirm it.
+
+        If a dialog for the same action is already open, accepts it and returns
+        False (the first pending call will proceed). If a *different* dialog is
+        open, does nothing and returns False.
+        """
+        if self._confirm_dialog is not None:
+            if self._confirm_action == action:
+                btn = self._confirm_dialog.button(QMessageBox.Yes)
+                if btn:
+                    btn.click()
+            return False
+
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(title)
+        dlg.setText(message)
+        dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        dlg.setDefaultButton(QMessageBox.No)
+        self._confirm_dialog = dlg
+        self._confirm_action = action
+        result = dlg.exec()
+        self._confirm_dialog = None
+        self._confirm_action = None
+        return result == QMessageBox.Yes
+
     def _on_replace_save(self) -> None:
         row = self.slot_list.currentRow()
         if row < 0 or row >= len(self._slots):
@@ -621,14 +651,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"'{slot.name}' is protected — disable protection before replacing.")
             return
         if self._config.confirm_replace:
-            reply = QMessageBox.question(
-                self,
-                "Replace save",
-                f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
+            if not self._confirm("replace", "Replace save",
+                                 f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone."):
                 return
         slot_name = slot.name
         try:
@@ -669,15 +693,9 @@ class MainWindow(QMainWindow):
         slot = self._slots[row]
         soft = self._config.soft_delete
         if self._config.confirm_delete:
-            msg = (
-                f"Move '{slot.name}' to trash?"
-                if soft else
-                f"Permanently delete '{slot.name}'?\n\nThis cannot be undone."
-            )
-            reply = QMessageBox.question(
-                self, "Delete slot", msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
+            msg = (f"Move '{slot.name}' to trash?" if soft
+                   else f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.")
+            if not self._confirm("delete", "Delete slot", msg):
                 return
         self._flush_notes()
         self._current_slot = None
@@ -908,14 +926,16 @@ class MainWindow(QMainWindow):
         cfg = self._config
         _bind(cfg.hotkey_import, self._on_import_save)
         _bind(cfg.hotkey_load, self._on_load_save)
+        _bind(cfg.hotkey_replace, self._on_replace_save)
         _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
 
         self.import_btn.setText(_btn_text("Import Save", cfg.hotkey_import))
         self.load_btn.setText(_btn_text("Load Save", cfg.hotkey_load))
+        self.replace_btn.setText(_btn_text("Replace Save", cfg.hotkey_replace))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
-        started = self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle)
-        if not started and any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle]):
+        started = self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle)
+        if not started and any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]):
             self.status_bar.showMessage(
                 "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
             )

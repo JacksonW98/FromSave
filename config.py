@@ -18,6 +18,7 @@ class Config:
     last_slot: str = ""
     hotkey_import: str = "F5"
     hotkey_load: str = "F9"
+    hotkey_replace: str = ""
     hotkey_ro_toggle: str = "F6"
     soft_delete: bool = False
     compact_list: bool = False
@@ -44,6 +45,7 @@ def load_config() -> Config:
             last_slot=data.get("last_slot", ""),
             hotkey_import=data.get("hotkey_import", "F5"),
             hotkey_load=data.get("hotkey_load", "F9"),
+            hotkey_replace=data.get("hotkey_replace", ""),
             hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
             soft_delete=data.get("soft_delete", False),
             compact_list=data.get("compact_list", False),

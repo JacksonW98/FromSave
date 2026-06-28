@@ -55,13 +55,14 @@ class GlobalHotkeyListener(QObject):
 
     import_triggered = Signal()
     load_triggered = Signal()
+    replace_triggered = Signal()
     ro_toggle_triggered = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._listener = None
 
-    def start(self, hotkey_import: str, hotkey_load: str, hotkey_ro: str) -> bool:
+    def start(self, hotkey_import: str, hotkey_load: str, hotkey_replace: str, hotkey_ro: str) -> bool:
         """Start the listener. Returns True if started, False if unavailable or not trusted."""
         self.stop()
         if not _AVAILABLE or not _is_trusted():
@@ -72,6 +73,8 @@ class GlobalHotkeyListener(QObject):
             bindings[pk] = self.import_triggered.emit
         if pk := _qt_to_pynput(hotkey_load):
             bindings[pk] = self.load_triggered.emit
+        if pk := _qt_to_pynput(hotkey_replace):
+            bindings[pk] = self.replace_triggered.emit
         if pk := _qt_to_pynput(hotkey_ro):
             bindings[pk] = self.ro_toggle_triggered.emit
 

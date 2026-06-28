@@ -31,6 +31,7 @@ class SettingsDialog(QDialog):
             last_slot=cfg.last_slot,
             hotkey_import=cfg.hotkey_import,
             hotkey_load=cfg.hotkey_load,
+            hotkey_replace=cfg.hotkey_replace,
             hotkey_ro_toggle=cfg.hotkey_ro_toggle,
             soft_delete=cfg.soft_delete,
             compact_list=cfg.compact_list,
@@ -41,7 +42,7 @@ class SettingsDialog(QDialog):
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.auto_name_imports,
             cfg.show_save_path, cfg.soft_delete, cfg.compact_list, cfg.hide_details,
-            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle,
+            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -119,6 +120,7 @@ class SettingsDialog(QDialog):
 
         self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
         self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
+        self._hk_replace = self._make_hotkey_row(hotkeys_layout, "Replace save", self._cfg.hotkey_replace)
         self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Toggle read-only", self._cfg.hotkey_ro_toggle)
         layout.addWidget(hotkeys_box)
 
@@ -284,6 +286,7 @@ class SettingsDialog(QDialog):
             self._hide_details.isChecked(),
             self._hk_import.keySequence().toString(),
             self._hk_load.keySequence().toString(),
+            self._hk_replace.keySequence().toString(),
             self._hk_ro.keySequence().toString(),
         )
         if current_cfg != self._initial_cfg:
@@ -315,6 +318,7 @@ class SettingsDialog(QDialog):
         self._cfg.show_save_path = self._show_save_path.isChecked()
         self._cfg.hotkey_import = self._hk_import.keySequence().toString()
         self._cfg.hotkey_load = self._hk_load.keySequence().toString()
+        self._cfg.hotkey_replace = self._hk_replace.keySequence().toString()
         self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
         self._cfg.soft_delete = self._soft_delete.isChecked()
         self._cfg.compact_list = self._compact_list.isChecked()

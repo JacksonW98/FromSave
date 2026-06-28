@@ -10,10 +10,11 @@
     "last_slot": "",
     "hotkey_import": "F5",
     "hotkey_load": "F9",
+    "hotkey_replace": "",
     "hotkey_ro_toggle": "F6",
     "soft_delete": true,
     "compact_list": true,
     "hide_details": true,
-    "window_width": 700,
+    "window_width": 720,
     "window_height": 580
 }
