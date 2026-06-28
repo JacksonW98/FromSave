@@ -1,11 +1,15 @@
-duplicate save (maybe a right click dialogue)
-copy a save to another profile
 search
-window size persistince?
+window size persistence?
 batch delete (maybe)
 show file size in info box
 auto backup features
 deleted save recovery?
+
+Added:
+Right click dialogue
+Duplicate save
+Copy/move a save to another profile
+
 
 Needs testing:
 read-only toggle
