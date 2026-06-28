@@ -623,20 +623,22 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No slot selected.")
             return
         slot = self._slots[row]
+        soft = self._config.soft_delete
         if self._config.confirm_delete:
+            msg = (
+                f"Move '{slot.name}' to trash?"
+                if soft else
+                f"Permanently delete '{slot.name}'?\n\nThis cannot be undone."
+            )
             reply = QMessageBox.question(
-                self,
-                "Delete slot",
-                f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                self, "Delete slot", msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 return
         self._flush_notes()
         self._current_slot = None
         try:
-            storage.delete_slot(slot)
+            storage.delete_slot(slot, soft=soft)
         except Exception as e:
             self.status_bar.showMessage(f"Delete failed: {e}")
             return
@@ -654,7 +656,7 @@ class MainWindow(QMainWindow):
             self._on_slot_selected(new_row)
         else:
             self._clear_detail()
-        self.status_bar.showMessage(f"Deleted '{slot.name}'.")
+        self.status_bar.showMessage(f"{'Moved to trash' if soft else 'Deleted'}: '{slot.name}'.")
 
     def _on_manage_profiles(self) -> None:
         game = self.game_combo.currentText()
@@ -778,11 +780,9 @@ class MainWindow(QMainWindow):
             self._flush_notes()
             self._current_slot = None
             try:
-                storage.delete_slot(slot)
+                storage.delete_slot(slot, soft=self._config.soft_delete)
             except Exception as e:
-                self.status_bar.showMessage(
-                    f"Copy succeeded but delete failed: {e}"
-                )
+                self.status_bar.showMessage(f"Copy succeeded but delete failed: {e}")
                 return
             self._reload_slots()
             self.status_bar.showMessage(

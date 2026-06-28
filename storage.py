@@ -245,9 +245,13 @@ def delete_profile(game: str, name: str) -> None:
     shutil.rmtree(SAVES_DIR / game / name)
 
 
-def delete_slot(slot: SaveSlot) -> None:
-    """Permanently delete a slot directory and all its contents."""
-    shutil.rmtree(slot.path)
+def delete_slot(slot: SaveSlot, soft: bool = False) -> None:
+    """Delete a slot. If soft is True, send to system trash instead of deleting permanently."""
+    if soft:
+        import send2trash
+        send2trash.send2trash(str(slot.path))
+    else:
+        shutil.rmtree(slot.path)
 
 
 def rename_slot(slot: SaveSlot, new_name: str) -> None:

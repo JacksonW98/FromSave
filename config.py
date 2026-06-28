@@ -19,6 +19,7 @@ class Config:
     hotkey_import: str = "F5"
     hotkey_load: str = "F9"
     hotkey_ro_toggle: str = "F6"
+    soft_delete: bool = False
 
 
 def load_config() -> Config:
@@ -40,6 +41,7 @@ def load_config() -> Config:
             hotkey_import=data.get("hotkey_import", "F5"),
             hotkey_load=data.get("hotkey_load", "F9"),
             hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
+            soft_delete=data.get("soft_delete", False),
         )
     except (json.JSONDecodeError, OSError):
         return Config()

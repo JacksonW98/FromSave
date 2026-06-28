@@ -27,6 +27,7 @@ class SettingsDialog(QDialog):
             hotkey_import=cfg.hotkey_import,
             hotkey_load=cfg.hotkey_load,
             hotkey_ro_toggle=cfg.hotkey_ro_toggle,
+            soft_delete=cfg.soft_delete,
         )
         self._game_entries: list[dict] = []
         self._build_ui()
@@ -62,9 +63,13 @@ class SettingsDialog(QDialog):
         self._confirm_delete.setChecked(self._cfg.confirm_delete)
         self._show_save_path = QCheckBox("Show save path in info panel")
         self._show_save_path.setChecked(self._cfg.show_save_path)
+        self._soft_delete = QCheckBox("Send deleted saves to the system trash instead of permanently deleting")
+        self._soft_delete.setChecked(self._cfg.soft_delete)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
         behaviour_layout.addWidget(self._show_save_path)
+        behaviour_layout.addWidget(self._soft_delete)
+
         layout.addWidget(behaviour_box)
 
         # Import naming
@@ -243,6 +248,7 @@ class SettingsDialog(QDialog):
         self._cfg.hotkey_import = self._hk_import.keySequence().toString()
         self._cfg.hotkey_load = self._hk_load.keySequence().toString()
         self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
+        self._cfg.soft_delete = self._soft_delete.isChecked()
         self.accept()
 
     @property
