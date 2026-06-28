@@ -279,6 +279,23 @@ def save_games(games: list[GameConfig]) -> None:
         json.dump(data, f, indent=4)
 
 
+def load_slot_order(game: str, profile: str) -> list[str]:
+    order_file = SAVES_DIR / game / profile / "order.json"
+    if not order_file.exists():
+        return []
+    try:
+        with open(order_file, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_slot_order(game: str, profile: str, names: list[str]) -> None:
+    order_file = SAVES_DIR / game / profile / "order.json"
+    with open(order_file, "w", encoding="utf-8") as f:
+        json.dump(names, f, indent=4)
+
+
 def _update_meta_modified(meta_file: Path, now: datetime) -> None:
     date_created, _ = _parse_meta(meta_file)
     meta = {

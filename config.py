@@ -11,6 +11,11 @@ class Config:
     confirm_replace: bool = True
     auto_name_imports: bool = False
     show_save_path: bool = True
+    slot_sort: str = "modified"  # "name" | "created" | "modified" | "custom"
+    slot_sort_desc: bool = True  # True = descending (newest first / Z→A)
+    last_game: str = ""
+    last_profile: str = ""
+    last_slot: str = ""
 
 
 def load_config() -> Config:
@@ -24,6 +29,11 @@ def load_config() -> Config:
             confirm_replace=data.get("confirm_replace", True),
             auto_name_imports=data.get("auto_name_imports", False),
             show_save_path=data.get("show_save_path", True),
+            slot_sort=data.get("slot_sort", "modified"),
+            slot_sort_desc=data.get("slot_sort_desc", True),
+            last_game=data.get("last_game", ""),
+            last_profile=data.get("last_profile", ""),
+            last_slot=data.get("last_slot", ""),
         )
     except (json.JSONDecodeError, OSError):
         return Config()

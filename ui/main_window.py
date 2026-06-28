@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
@@ -136,6 +137,30 @@ class MainWindow(QMainWindow):
         header.addWidget(lbl)
         header.addStretch()
 
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Modified", "Created", "Name", "Custom"])
+        self.sort_combo.setFixedWidth(115)
+        _sort_label = {"modified": "Modified", "created": "Created", "name": "Name", "custom": "Custom"}
+        self.sort_combo.setCurrentText(_sort_label.get(self._config.slot_sort, "Modified"))
+        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        header.addWidget(self.sort_combo)
+
+        _ui_dir = Path(__file__).parent
+        self._icon_sort_desc = QIcon(str(_ui_dir / "sort_desc.svg"))
+        self._icon_sort_asc = QIcon(str(_ui_dir / "sort_asc.svg"))
+
+        header.addSpacing(4)
+        self.sort_dir_btn = QPushButton()
+        self.sort_dir_btn.setIcon(self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc)
+        self.sort_dir_btn.setIconSize(QSize(16, 16))
+        self.sort_dir_btn.setObjectName("ghostBtn")
+        self.sort_dir_btn.setFixedWidth(36)
+        self.sort_dir_btn.setEnabled(self._config.slot_sort != "custom")
+        self.sort_dir_btn.setToolTip("Toggle ascending / descending")
+        self.sort_dir_btn.clicked.connect(self._on_sort_dir_toggled)
+        header.addWidget(self.sort_dir_btn)
+
+        header.addSpacing(8)
         self.slot_count_label = QLabel("0 slots")
         self.slot_count_label.setObjectName("mutedLabel")
         header.addWidget(self.slot_count_label)
@@ -146,6 +171,7 @@ class MainWindow(QMainWindow):
         self.slot_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.slot_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.slot_list.currentRowChanged.connect(self._on_slot_selected)
+        self.slot_list.model().rowsMoved.connect(self._on_rows_moved)
         layout.addWidget(self.slot_list, 1)
 
         return panel
@@ -255,11 +281,39 @@ class MainWindow(QMainWindow):
             self.game_combo.addItem(game.name)
         self.game_combo.blockSignals(False)
 
-        if self._games:
-            self._on_game_changed(0)
-        else:
+        if not self._games:
             self.profile_combo.clear()
             self._reload_slots()
+            return
+
+        # Restore last game, fall back to first
+        game_idx = self.game_combo.findText(self._config.last_game)
+        if game_idx < 0:
+            game_idx = 0
+        self.game_combo.setCurrentIndex(game_idx)
+
+        # Load profiles for selected game
+        game_name = self.game_combo.currentText()
+        profiles = storage.load_profiles(game_name)
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for p in profiles:
+            self.profile_combo.addItem(p)
+        self.profile_combo.blockSignals(False)
+
+        # Restore last profile, fall back to first
+        if profiles:
+            profile_idx = self.profile_combo.findText(self._config.last_profile)
+            if profile_idx < 0:
+                profile_idx = 0
+            self.profile_combo.setCurrentIndex(profile_idx)
+
+        # Update game info panel
+        game_cfg = self._get_game_cfg()
+        self.info_save_path.set_value(game_cfg.save_path if (game_cfg and game_cfg.save_path) else "—")
+
+        # Load slots, restoring last selected slot
+        self._reload_slots(self._config.last_slot)
 
     def _on_game_changed(self, _: int) -> None:
         game_name = self.game_combo.currentText()
@@ -279,16 +333,79 @@ class MainWindow(QMainWindow):
     def _on_profile_changed(self, _: int) -> None:
         self._reload_slots()
 
-    def _reload_slots(self) -> None:
+    def _on_sort_changed(self, text: str) -> None:
+        mode_map = {"Modified": "modified", "Created": "created", "Name": "name", "Custom": "custom"}
+        mode = mode_map.get(text, "modified")
+        if mode == self._config.slot_sort:
+            return
+        self._config.slot_sort = mode
+        self.sort_dir_btn.setEnabled(mode != "custom")
+        config.save_config(self._config)
+        self._reload_slots()
+        if mode == "custom":
+            self.status_bar.showMessage("Custom order — drag slots to rearrange.", 4000)
+
+    def _on_sort_dir_toggled(self) -> None:
+        self._config.slot_sort_desc = not self._config.slot_sort_desc
+        self.sort_dir_btn.setIcon(
+            self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc
+        )
+        config.save_config(self._config)
+        self._reload_slots()
+
+    def _on_rows_moved(self, *_) -> None:
+        if self._config.slot_sort != "custom":
+            return
+        new_slots = []
+        for i in range(self.slot_list.count()):
+            new_slots.append(self.slot_list.item(i).data(Qt.UserRole))
+        self._slots = new_slots
+        storage.save_slot_order(
+            self.game_combo.currentText(),
+            self.profile_combo.currentText(),
+            [s.name for s in self._slots],
+        )
+        QTimer.singleShot(0, self._reattach_slot_widgets)
+
+    def _reattach_slot_widgets(self) -> None:
+        for i in range(self.slot_list.count()):
+            item = self.slot_list.item(i)
+            slot = item.data(Qt.UserRole)
+            ts = _fmt_dt(slot.date_modified or slot.date_created)
+            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
+
+    def _reload_slots(self, select_slot: str = "") -> None:
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
 
-        self._slots = (
+        slots = (
             storage.load_slots(game_name, profile_name)
             if game_name and profile_name
             else []
         )
 
+        sort_mode = self._config.slot_sort
+        desc = self._config.slot_sort_desc
+        if sort_mode == "name":
+            slots.sort(key=lambda s: s.name.lower(), reverse=desc)
+        elif sort_mode == "created":
+            slots.sort(key=lambda s: s.date_created or datetime.min, reverse=desc)
+        elif sort_mode == "modified":
+            slots.sort(key=lambda s: s.date_modified or s.date_created or datetime.min, reverse=desc)
+        elif sort_mode == "custom" and game_name and profile_name:
+            order = storage.load_slot_order(game_name, profile_name)
+            if order:
+                order_map = {name: i for i, name in enumerate(order)}
+                slots.sort(key=lambda s: order_map.get(s.name, len(order)))
+            storage.save_slot_order(game_name, profile_name, [s.name for s in slots])
+
+        is_custom = sort_mode == "custom"
+        self.slot_list.setDragDropMode(
+            QAbstractItemView.InternalMove if is_custom else QAbstractItemView.NoDragDrop
+        )
+        self.sort_dir_btn.setEnabled(not is_custom)
+
+        self._slots = slots
         self.slot_list.blockSignals(True)
         self.slot_list.clear()
         for slot in self._slots:
@@ -304,8 +421,14 @@ class MainWindow(QMainWindow):
         self.slot_count_label.setText(f"{count} slot{'s' if count != 1 else ''}")
 
         if self._slots:
-            self.slot_list.setCurrentRow(0)
-            self._on_slot_selected(0)
+            target = 0
+            if select_slot:
+                for i, s in enumerate(self._slots):
+                    if s.name == select_slot:
+                        target = i
+                        break
+            self.slot_list.setCurrentRow(target)
+            self._on_slot_selected(target)
         else:
             self._clear_detail()
 
@@ -386,11 +509,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_bar.showMessage(f"Import failed: {e}")
             return
-        self._reload_slots()
-        for i, s in enumerate(self._slots):
-            if s.name == name:
-                self.slot_list.setCurrentRow(i)
-                break
+        self._reload_slots(name)
         self.status_bar.showMessage(f"Imported '{name}'.")
 
     def _on_replace_save(self) -> None:
@@ -412,15 +531,14 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.Yes:
                 return
+        slot_name = slot.name
         try:
             storage.replace_save(slot, cfg)
         except Exception as e:
             self.status_bar.showMessage(f"Replace failed: {e}")
             return
-        ts = _fmt_dt(slot.date_modified or slot.date_created)
-        self.slot_list.setItemWidget(self.slot_list.item(row), _SlotItem(slot.name, ts))
-        self._on_slot_selected(row)
-        self.status_bar.showMessage(f"Replaced '{slot.name}'.")
+        self._reload_slots(slot_name)
+        self.status_bar.showMessage(f"Replaced '{slot_name}'.")
 
     def _on_load_save(self) -> None:
         row = self.slot_list.currentRow()
@@ -515,9 +633,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_bar.showMessage(f"Rename failed: {e}")
             return
+        item = self.slot_list.item(row)
+        item.setText(slot.name)
         ts = _fmt_dt(slot.date_modified or slot.date_created)
-        self.slot_list.setItemWidget(self.slot_list.item(row), _SlotItem(slot.name, ts))
+        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
         self.detail_name.setText(slot.name)
+        if self._config.slot_sort == "custom":
+            storage.save_slot_order(
+                self.game_combo.currentText(),
+                self.profile_combo.currentText(),
+                [s.name for s in self._slots],
+            )
         self.status_bar.showMessage(f"Renamed to '{slot.name}'.")
 
     def _on_open_settings(self) -> None:
@@ -568,6 +694,14 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Save path not found: {src}")
             return False
         return True
+
+    def closeEvent(self, event) -> None:
+        self._flush_notes()
+        self._config.last_game = self.game_combo.currentText()
+        self._config.last_profile = self.profile_combo.currentText()
+        self._config.last_slot = self._current_slot.name if self._current_slot else ""
+        config.save_config(self._config)
+        super().closeEvent(event)
 
     def _stub(self, action: str):
         def handler():
