@@ -263,7 +263,7 @@ class MainWindow(QMainWindow):
         self.info_save_path = _InfoRow("Save path", "—")
         self.info_created = _InfoRow("Created", "—")
         self.info_file_size = _InfoRow("File size", "—")
-        self.info_ro_status = _InfoRow("File status", "—")
+        self.info_ro_status = _InfoRow("Protection", "—")
 
         for row in (self.info_save_path, self.info_created, self.info_file_size, self.info_ro_status):
             info_layout.addWidget(row)
@@ -297,7 +297,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
-        self.ro_btn = QPushButton(_btn_text("  Toggle read-only", self._config.hotkey_ro_toggle))
+        self.ro_btn = QPushButton(_btn_text("Protect save", self._config.hotkey_ro_toggle))
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
         self.ro_btn.setEnabled(False)
@@ -490,7 +490,7 @@ class MainWindow(QMainWindow):
         if save_files:
             is_guarded = (self._guard_slot is not None
                           and self._guard_slot.path == slot.path)
-            self.info_ro_status.set_value("Read-only" if is_guarded else "Writable")
+            self.info_ro_status.set_value("Protected" if is_guarded else "Unprotected")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(is_guarded)
             self.ro_btn.setText(self._ro_btn_text(is_guarded))
@@ -559,7 +559,7 @@ class MainWindow(QMainWindow):
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
         self.ro_btn.setText(self._ro_btn_text(checked))
-        self.info_ro_status.set_value("Read-only" if checked else "Writable")
+        self.info_ro_status.set_value("Protected" if checked else "Unprotected")
         self.status_bar.showMessage(
             f"'{label}' {'is now protected.' if checked else 'is now unprotected.'}"
         )
@@ -908,8 +908,8 @@ class MainWindow(QMainWindow):
     def _ro_btn_text(self, is_on: bool) -> str:
         key = _hotkey_label(self._config.hotkey_ro_toggle)
         if is_on:
-            return _btn_text("Read-only ON", key)
-        return _btn_text("  Toggle read-only", key)
+            return _btn_text("Save protected", key)
+        return _btn_text("Protect save", key)
 
     def _apply_hotkeys(self) -> None:
         for sc in getattr(self, "_shortcuts", []):
@@ -924,21 +924,24 @@ class MainWindow(QMainWindow):
                 self._shortcuts.append(sc)
 
         cfg = self._config
-        _bind(cfg.hotkey_import, self._on_import_save)
-        _bind(cfg.hotkey_load, self._on_load_save)
-        _bind(cfg.hotkey_replace, self._on_replace_save)
-        _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
-
         self.import_btn.setText(_btn_text("Import Save", cfg.hotkey_import))
         self.load_btn.setText(_btn_text("Load Save", cfg.hotkey_load))
         self.replace_btn.setText(_btn_text("Replace Save", cfg.hotkey_replace))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
         started = self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle)
-        if not started and any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]):
-            self.status_bar.showMessage(
-                "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
-            )
+        if not started:
+            # pynput unavailable (e.g. macOS without Accessibility permission) — fall back to
+            # in-app QShortcuts. When pynput IS running it fires on both focused and unfocused
+            # presses, so QShortcuts must not be added or they double-trigger every keypress.
+            _bind(cfg.hotkey_import, self._on_import_save)
+            _bind(cfg.hotkey_load, self._on_load_save)
+            _bind(cfg.hotkey_replace, self._on_replace_save)
+            _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
+            if any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]):
+                self.status_bar.showMessage(
+                    "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
+                )
 
     def _apply_info_panel(self) -> None:
         hide = self._config.hide_details

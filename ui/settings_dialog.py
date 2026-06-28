@@ -121,7 +121,7 @@ class SettingsDialog(QDialog):
         self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
         self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
         self._hk_replace = self._make_hotkey_row(hotkeys_layout, "Replace save", self._cfg.hotkey_replace)
-        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Toggle read-only", self._cfg.hotkey_ro_toggle)
+        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Protect save", self._cfg.hotkey_ro_toggle)
         layout.addWidget(hotkeys_box)
 
         # Game save paths
