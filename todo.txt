@@ -1,4 +1,3 @@
-read-only toggle
 duplicate save (maybe a right click dialogue)
 copy a save to another profile
 search
@@ -7,3 +6,6 @@ batch delete (maybe)
 show file size in info box
 auto backup features
 deleted save recovery?
+
+Needs testing:
+read-only toggle

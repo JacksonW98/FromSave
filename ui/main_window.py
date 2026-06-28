@@ -267,6 +267,7 @@ class MainWindow(QMainWindow):
         self.ro_btn = QPushButton("  Toggle read-only  (F6)")
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
+        self.ro_btn.setEnabled(False)
         self.ro_btn.toggled.connect(self._on_ro_toggled)
         bar.addWidget(self.ro_btn)
 
@@ -452,9 +453,20 @@ class MainWindow(QMainWindow):
         self.info_created.set_value(_fmt_dt(slot.date_created))
         if slot.save_file:
             save_path = slot.path / slot.save_file
-            self.info_ro_status.set_value("Read-only" if not os.access(save_path, os.W_OK) else "Writable")
+            is_ro = not os.access(save_path, os.W_OK)
+            self.info_ro_status.set_value("Read-only" if is_ro else "Writable")
+            self.ro_btn.blockSignals(True)
+            self.ro_btn.setChecked(is_ro)
+            self.ro_btn.setText("Read-only ON  (F6)" if is_ro else "  Toggle read-only  (F6)")
+            self.ro_btn.blockSignals(False)
+            self.ro_btn.setEnabled(True)
         else:
             self.info_ro_status.set_value("—")
+            self.ro_btn.blockSignals(True)
+            self.ro_btn.setChecked(False)
+            self.ro_btn.setText("  Toggle read-only  (F6)")
+            self.ro_btn.blockSignals(False)
+            self.ro_btn.setEnabled(False)
 
     def _clear_detail(self) -> None:
         self._current_slot = None
@@ -466,6 +478,11 @@ class MainWindow(QMainWindow):
         self.detail_notes.blockSignals(False)
         self.info_created.set_value("—")
         self.info_ro_status.set_value("—")
+        self.ro_btn.blockSignals(True)
+        self.ro_btn.setChecked(False)
+        self.ro_btn.setText("  Toggle read-only  (F6)")
+        self.ro_btn.blockSignals(False)
+        self.ro_btn.setEnabled(False)
 
     def _on_notes_changed(self) -> None:
         self._notes_save_timer.start()
@@ -478,14 +495,26 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Notes saved.", 2000)
 
     def _on_ro_toggled(self, checked: bool) -> None:
-        if checked:
-            self.ro_btn.setText("Read-only ON  (F6)")
-            self.info_ro_status.set_value("Read-only")
-            self.status_bar.showMessage("Save file is now read-only.")
-        else:
-            self.ro_btn.setText("  Toggle read-only  (F6)")
-            self.info_ro_status.set_value("Writable")
-            self.status_bar.showMessage("Save file is now writable.")
+        if not self._current_slot or not self._current_slot.save_file:
+            return
+        save_path = self._current_slot.path / self._current_slot.save_file
+        try:
+            mode = save_path.stat().st_mode
+            if checked:
+                os.chmod(save_path, mode & ~0o222)  # remove all write bits
+                self.ro_btn.setText("Read-only ON  (F6)")
+                self.info_ro_status.set_value("Read-only")
+                self.status_bar.showMessage(f"'{self._current_slot.save_file}' locked read-only.")
+            else:
+                os.chmod(save_path, mode | 0o200)   # restore user write bit
+                self.ro_btn.setText("  Toggle read-only  (F6)")
+                self.info_ro_status.set_value("Writable")
+                self.status_bar.showMessage(f"'{self._current_slot.save_file}' is now writable.")
+        except OSError as e:
+            self.status_bar.showMessage(f"Failed to change permissions: {e}")
+            self.ro_btn.blockSignals(True)
+            self.ro_btn.setChecked(not checked)
+            self.ro_btn.blockSignals(False)
 
     def _on_import_save(self) -> None:
         cfg = self._get_game_cfg()
@@ -523,6 +552,9 @@ class MainWindow(QMainWindow):
         if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
+        if slot.save_file and not os.access(slot.path / slot.save_file, os.W_OK):
+            self.status_bar.showMessage(f"'{slot.name}' is read-only — unlock it before replacing.")
+            return
         if self._config.confirm_replace:
             reply = QMessageBox.question(
                 self,
