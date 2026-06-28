@@ -269,6 +269,44 @@ def auto_slot_name(game: str, profile: str) -> str:
     return f"{base} {n}"
 
 
+def duplicate_slot_name(game: str, profile: str, original_name: str) -> str:
+    """Return a unique 'original copy' / 'original copy 2' name in the given profile."""
+    target = SAVES_DIR / game / profile
+    base = f"{original_name} copy"
+    if not (target / base).exists():
+        return base
+    n = 2
+    while (target / f"{base} {n}").exists():
+        n += 1
+    return f"{base} {n}"
+
+
+def duplicate_slot(slot: SaveSlot, new_name: str) -> SaveSlot:
+    """Copy a slot to a new name within the same profile."""
+    new_dir = slot.path.parent / new_name
+    shutil.copytree(slot.path, new_dir)
+    now = datetime.now()
+    (new_dir / "meta.json").write_text(
+        json.dumps({"created": now.isoformat(timespec="seconds"),
+                    "modified": now.isoformat(timespec="seconds")}, indent=4),
+        encoding="utf-8",
+    )
+    return _read_slot(new_dir, slot.game, slot.profile)
+
+
+def copy_slot_to_profile(slot: SaveSlot, target_profile: str, new_name: str) -> SaveSlot:
+    """Copy a slot (with its notes) to a different profile under the same game."""
+    new_dir = SAVES_DIR / slot.game / target_profile / new_name
+    shutil.copytree(slot.path, new_dir)
+    now = datetime.now()
+    (new_dir / "meta.json").write_text(
+        json.dumps({"created": now.isoformat(timespec="seconds"),
+                    "modified": now.isoformat(timespec="seconds")}, indent=4),
+        encoding="utf-8",
+    )
+    return _read_slot(new_dir, slot.game, target_profile)
+
+
 def save_games(games: list[GameConfig]) -> None:
     """Write updated game configs back to games.json."""
     data = {

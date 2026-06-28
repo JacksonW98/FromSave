@@ -177,3 +177,28 @@ QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {
   height: 0;
 }
+
+/* ── Context menu ── */
+QMenu {
+  background: #1f1f25;
+  border: 1px solid #333340;
+  border-radius: 6px;
+  padding: 4px 0;
+}
+QMenu::item {
+  padding: 6px 24px 6px 12px;
+  color: #d4cfc8;
+  border-radius: 3px;
+  margin: 1px 4px;
+}
+QMenu::item:selected {
+  background: #2a2a38;
+}
+QMenu::item:disabled {
+  color: #555566;
+}
+QMenu::separator {
+  height: 1px;
+  background: #2a2a32;
+  margin: 4px 8px;
+}

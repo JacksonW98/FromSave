@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
-    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox,
+    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox, QMenu,
 )
 
 import config
@@ -172,6 +172,8 @@ class MainWindow(QMainWindow):
         self.slot_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.slot_list.currentRowChanged.connect(self._on_slot_selected)
         self.slot_list.model().rowsMoved.connect(self._on_rows_moved)
+        self.slot_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.slot_list.customContextMenuRequested.connect(self._on_slot_context_menu)
         layout.addWidget(self.slot_list, 1)
 
         return panel
@@ -668,7 +670,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Rename failed: {e}")
             return
         item = self.slot_list.item(row)
-        item.setText(slot.name)
         ts = _fmt_dt(slot.date_modified or slot.date_created)
         self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts))
         self.detail_name.setText(slot.name)
@@ -679,6 +680,97 @@ class MainWindow(QMainWindow):
         if self._config.slot_sort == "custom" or storage.load_slot_order(game_name, profile_name):
             storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
         self.status_bar.showMessage(f"Renamed to '{slot.name}'.")
+
+    def _on_slot_context_menu(self, pos) -> None:
+        item = self.slot_list.itemAt(pos)
+        if not item:
+            return
+        row = self.slot_list.row(item)
+        self.slot_list.setCurrentRow(row)
+
+        menu = QMenu(self)
+        menu.addAction("Rename", self._on_rename_slot)
+        menu.addAction("Load save", self._on_load_save)
+        menu.addSeparator()
+        menu.addAction("Duplicate", self._on_duplicate_slot)
+        menu.addAction("Copy to profile…", lambda: self._on_copy_to_profile(move=False))
+        menu.addAction("Move to profile…", lambda: self._on_copy_to_profile(move=True))
+        menu.addSeparator()
+        menu.addAction("Delete", self._on_delete_slot)
+        menu.exec(self.slot_list.mapToGlobal(pos))
+
+    def _on_duplicate_slot(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            return
+        slot = self._slots[row]
+        new_name = storage.duplicate_slot_name(
+            self.game_combo.currentText(),
+            self.profile_combo.currentText(),
+            slot.name,
+        )
+        try:
+            storage.duplicate_slot(slot, new_name)
+        except Exception as e:
+            self.status_bar.showMessage(f"Duplicate failed: {e}")
+            return
+        self._reload_slots(new_name)
+        self.status_bar.showMessage(f"Duplicated as '{new_name}'.")
+
+    def _on_copy_to_profile(self, move: bool = False) -> None:
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            return
+        slot = self._slots[row]
+        game = self.game_combo.currentText()
+        current_profile = self.profile_combo.currentText()
+
+        all_profiles = storage.load_profiles(game)
+        other_profiles = [p for p in all_profiles if p != current_profile]
+        if not other_profiles:
+            self.status_bar.showMessage("No other profiles exist for this game.")
+            return
+
+        verb = "Move" if move else "Copy"
+        if len(other_profiles) == 1:
+            target_profile = other_profiles[0]
+        else:
+            target_profile, ok = QInputDialog.getItem(
+                self, f"{verb} to profile", "Target profile:", other_profiles, 0, False
+            )
+            if not ok:
+                return
+
+        new_name = slot.name
+        if (storage.SAVES_DIR / game / target_profile / new_name).exists():
+            new_name = storage.duplicate_slot_name(game, target_profile, slot.name)
+
+        try:
+            storage.copy_slot_to_profile(slot, target_profile, new_name)
+        except Exception as e:
+            self.status_bar.showMessage(f"{verb} failed: {e}")
+            return
+
+        slot_name = slot.name
+        if move:
+            self._flush_notes()
+            self._current_slot = None
+            try:
+                storage.delete_slot(slot)
+            except Exception as e:
+                self.status_bar.showMessage(
+                    f"Copy succeeded but delete failed: {e}"
+                )
+                return
+            self._reload_slots()
+            self.status_bar.showMessage(
+                f"Moved '{slot_name}' to profile '{target_profile}'."
+            )
+        else:
+            self.status_bar.showMessage(
+                f"Copied '{slot_name}' to profile '{target_profile}'"
+                + (f" as '{new_name}'." if new_name != slot_name else ".")
+            )
 
     def _on_open_settings(self) -> None:
         prev_game = self.game_combo.currentText()
