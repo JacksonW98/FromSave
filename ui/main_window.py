@@ -873,7 +873,11 @@ class MainWindow(QMainWindow):
         self.load_btn.setText(_btn_text("Load Save", cfg.hotkey_load))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
-        self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle)
+        started = self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle)
+        if not started and any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle]):
+            self.status_bar.showMessage(
+                "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
+            )
 
     def _apply_path_visibility(self) -> None:
         self.info_save_path.setVisible(self._config.show_save_path)
