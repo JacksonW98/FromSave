@@ -1,22 +1,22 @@
 {
     "Elden Ring": {
-        "save_path": "",
-        "save_mode": "file"
+        "save_mode": "file",
+        "save_path": ""
     },
     "Dark Souls III": {
-        "save_path": "",
-        "save_mode": "file"
+        "save_mode": "file",
+        "save_path": ""
     },
     "Dark Souls Remastered": {
-        "save_path": "",
-        "save_mode": "file"
+        "save_mode": "file",
+        "save_path": ""
     },
     "Dark Souls II: Scholar of the First Sin": {
-        "save_path": "",
-        "save_mode": "file"
+        "save_mode": "file",
+        "save_path": ""
     },
     "Armored Core VI": {
-        "save_path": "",
-        "save_mode": "file"
+        "save_mode": "file",
+        "save_path": ""
     }
 }
