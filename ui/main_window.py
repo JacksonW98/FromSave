@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize, QTimer, QFileSystemWatcher
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -44,6 +44,11 @@ class MainWindow(QMainWindow):
         self._notes_save_timer.setSingleShot(True)
         self._notes_save_timer.setInterval(600)
         self._notes_save_timer.timeout.connect(self._flush_notes)
+
+        self._guard_watcher = QFileSystemWatcher(self)
+        self._guard_watcher.fileChanged.connect(self._on_guarded_file_changed)
+        self._guard_slot: Optional[storage.SaveSlot] = None
+        self._guard_cfg: Optional[storage.GameConfig] = None
 
         self._global_hotkeys = GlobalHotkeyListener(self)
 
@@ -479,11 +484,12 @@ class MainWindow(QMainWindow):
         self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
         save_files = _slot_save_files(slot)
         if save_files:
-            is_ro = all(not os.access(f, os.W_OK) for f in save_files)
-            self.info_ro_status.set_value("Read-only" if is_ro else "Writable")
+            is_guarded = (self._guard_slot is not None
+                          and self._guard_slot.path == slot.path)
+            self.info_ro_status.set_value("Read-only" if is_guarded else "Writable")
             self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(is_ro)
-            self.ro_btn.setText(self._ro_btn_text(is_ro))
+            self.ro_btn.setChecked(is_guarded)
+            self.ro_btn.setText(self._ro_btn_text(is_guarded))
             self.ro_btn.blockSignals(False)
             self.ro_btn.setEnabled(True)
         else:
@@ -518,6 +524,8 @@ class MainWindow(QMainWindow):
         self._notes_save_timer.stop()
         if self._current_slot is None:
             return
+        if not self._current_slot.path.exists():
+            return
         storage.save_notes(self._current_slot, self.detail_notes.toPlainText())
         self.status_bar.showMessage("Notes saved.", 2000)
 
@@ -527,22 +535,51 @@ class MainWindow(QMainWindow):
         save_files = _slot_save_files(self._current_slot)
         if not save_files:
             return
+        game_cfg = self._get_game_cfg()
+        if not game_cfg:
+            return
+
+        if checked:
+            self._guard_slot = self._current_slot
+            self._guard_cfg = game_cfg
+            live_paths = [str(f) for f in _live_game_files(game_cfg)]
+            if live_paths:
+                self._guard_watcher.addPaths(live_paths)
+        else:
+            self._guard_slot = None
+            self._guard_cfg = None
+            watched = self._guard_watcher.files()
+            if watched:
+                self._guard_watcher.removePaths(watched)
+
+        n = len(save_files)
+        label = save_files[0].name if n == 1 else f"{n} files"
+        self.ro_btn.setText(self._ro_btn_text(checked))
+        self.info_ro_status.set_value("Read-only" if checked else "Writable")
+        self.status_bar.showMessage(
+            f"'{label}' {'is now protected.' if checked else 'is now unprotected.'}"
+        )
+
+    def _on_guarded_file_changed(self, path: str) -> None:
+        if self._guard_slot is None or self._guard_cfg is None:
+            return
+        # Remove the path now so our own restore write doesn't re-trigger this handler
+        self._guard_watcher.removePath(path)
+        # Delay the restore so the game has time to finish its write and close the file
+        QTimer.singleShot(500, lambda: self._do_guard_restore(path))
+
+    def _do_guard_restore(self, path: str) -> None:
+        if self._guard_slot is None or self._guard_cfg is None:
+            return
         try:
-            for f in save_files:
-                mode = f.stat().st_mode
-                os.chmod(f, (mode & ~0o222) if checked else (mode | 0o200))
-            n = len(save_files)
-            label = save_files[0].name if n == 1 else f"{n} files"
-            self.ro_btn.setText(self._ro_btn_text(checked))
-            self.info_ro_status.set_value("Read-only" if checked else "Writable")
+            storage.load_save(self._guard_slot, self._guard_cfg)
             self.status_bar.showMessage(
-                f"'{label}' {'locked read-only' if checked else 'is now writable'}."
+                f"Protected: restored '{self._guard_slot.name}'.", 4000
             )
         except OSError as e:
-            self.status_bar.showMessage(f"Failed to change permissions: {e}")
-            self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(not checked)
-            self.ro_btn.blockSignals(False)
+            self.status_bar.showMessage(f"Protection: restore failed — {e}")
+        # Re-add after our write is done so the next game save is caught
+        self._guard_watcher.addPath(path)
 
     def _on_import_save(self) -> None:
         cfg = self._get_game_cfg()
@@ -580,8 +617,8 @@ class MainWindow(QMainWindow):
         if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
-        if any(not os.access(f, os.W_OK) for f in _slot_save_files(slot)):
-            self.status_bar.showMessage(f"'{slot.name}' is read-only — unlock it before replacing.")
+        if self._guard_slot is not None and self._guard_slot.path == slot.path:
+            self.status_bar.showMessage(f"'{slot.name}' is protected — disable protection before replacing.")
             return
         if self._config.confirm_replace:
             reply = QMessageBox.question(
@@ -616,6 +653,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_bar.showMessage(f"Load failed: {e}")
             return
+
+        # If protection is active, re-point the guard at the newly loaded slot
+        if self._guard_cfg is not None and self._guard_cfg.name == cfg.name:
+            self._guard_slot = slot
+            # Watcher paths stay the same (same game, same live files)
+
         self.status_bar.showMessage(f"Loaded '{slot.name}' to game save.")
 
     def _on_delete_slot(self) -> None:
@@ -961,6 +1004,19 @@ def _slot_save_files(slot: storage.SaveSlot) -> list[Path]:
         f for f in slot.path.iterdir()
         if f.is_file() and f.name not in storage._RESERVED and not f.name.startswith(".")
     ]
+
+
+def _live_game_files(game_cfg: storage.GameConfig) -> list[Path]:
+    """Return the game's live save paths that should be watched for protection."""
+    if game_cfg.save_mode == "file":
+        return [Path(game_cfg.save_path)]
+    if game_cfg.save_mode == "files":
+        return [Path(p) for p in game_cfg.save_paths]
+    if game_cfg.save_mode == "folder":
+        folder = Path(game_cfg.save_path)
+        if folder.exists():
+            return [f for f in folder.rglob("*") if f.is_file()]
+    return []
 
 
 def _slot_save_size(slot: storage.SaveSlot) -> Optional[int]:
