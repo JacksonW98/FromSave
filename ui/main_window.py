@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
         if self._guard_slot is None or self._guard_cfg is None:
             return
         try:
-            storage.load_save(self._guard_slot, self._guard_cfg)
+            storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
             self.status_bar.showMessage(
                 f"Protected: restored '{self._guard_slot.name}'.", 4000
             )

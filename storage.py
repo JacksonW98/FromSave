@@ -214,8 +214,18 @@ def replace_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
     slot.date_modified = now
 
 
-def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
+_BACKUPS_DIR_NAME = "_backups"
+_MAX_LOAD_BACKUPS = 3
+
+
+def load_save(slot: SaveSlot, game_cfg: GameConfig, *, make_backup: bool = True) -> None:
     """Copy a slot's save back to the game's save path."""
+    if make_backup:
+        try:
+            _backup_live_save(game_cfg)
+        except OSError:
+            pass  # best-effort — don't block the load if backup fails
+
     mode = game_cfg.save_mode
 
     if mode == "file":
@@ -231,6 +241,45 @@ def load_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(slot.path / "save_data", dest)
+
+
+def _backup_live_save(game_cfg: GameConfig) -> None:
+    """Snapshot the live game save before it is overwritten by load_save."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
+    backup_dir = SAVES_DIR / _BACKUPS_DIR_NAME / game_cfg.name / timestamp
+    mode = game_cfg.save_mode
+
+    if mode == "file":
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, backup_dir / src.name)
+    elif mode == "files":
+        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
+        if not existing:
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for src in existing:
+            shutil.copy2(src, backup_dir / src.name)
+    elif mode == "folder":
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, backup_dir / "save_data")
+
+    _prune_backups(game_cfg.name, _MAX_LOAD_BACKUPS)
+
+
+def _prune_backups(game_name: str, keep: int) -> None:
+    """Delete oldest backup snapshots, retaining only the `keep` most recent."""
+    backup_game_dir = SAVES_DIR / _BACKUPS_DIR_NAME / game_name
+    if not backup_game_dir.exists():
+        return
+    dirs = sorted(d for d in backup_game_dir.iterdir() if d.is_dir())
+    for old in dirs[:-keep]:
+        shutil.rmtree(old)
 
 
 def create_profile(game: str, name: str) -> None:

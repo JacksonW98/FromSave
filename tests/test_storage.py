@@ -734,3 +734,105 @@ class TestManuallyAddedSaves:
         storage.load_save(slot, cfg_file(src))
 
         assert src.read_text() == "original data"
+
+
+# ── load backups ──────────────────────────────────────────────────────────────
+
+class TestLoadBackups:
+    def _backup_dirs(self, game_name: str) -> list[Path]:
+        backup_game = storage.SAVES_DIR / storage._BACKUPS_DIR_NAME / game_name
+        if not backup_game.exists():
+            return []
+        return sorted(d for d in backup_game.iterdir() if d.is_dir())
+
+    def test_backup_created_on_load(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "live data")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        storage.load_save(slot, game_cfg)
+
+        backups = self._backup_dirs("TestGame")
+        assert len(backups) == 1
+        assert (backups[0] / "save.sav").read_text() == "live data"
+
+    def test_backup_contains_live_content_not_slot_content(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "live v1")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+        src.write_text("live v2")  # live save changed after import
+
+        storage.load_save(slot, game_cfg)
+
+        [backup] = self._backup_dirs("TestGame")
+        assert (backup / "save.sav").read_text() == "live v2"
+
+    def test_files_mode_backup(self, tmp_path):
+        f1 = make_src_file(tmp_path, "a.dat", "d1")
+        f2 = make_src_file(tmp_path, "b.dat", "d2")
+        game_cfg = cfg_files([f1, f2])
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        storage.load_save(slot, game_cfg)
+
+        [backup] = self._backup_dirs("TestGame")
+        assert (backup / "a.dat").read_text() == "d1"
+        assert (backup / "b.dat").read_text() == "d2"
+
+    def test_folder_mode_backup(self, tmp_path):
+        src_folder = make_src_folder(tmp_path)
+        game_cfg = cfg_folder(src_folder)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        storage.load_save(slot, game_cfg)
+
+        [backup] = self._backup_dirs("TestGame")
+        assert (backup / "save_data" / "checkpoint.sav").read_text() == "checkpoint"
+
+    def test_keeps_only_last_3_backups(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "data")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        for i in range(5):
+            src.write_text(f"version {i}")
+            storage.import_save("TestGame", "default", f"Slot{i+2}", game_cfg)
+            storage.load_save(slot, game_cfg)
+
+        backups = self._backup_dirs("TestGame")
+        assert len(backups) == 3
+
+    def test_oldest_backup_pruned_first(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "v0")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        for i in range(4):
+            src.write_text(f"v{i}")
+            storage.import_save("TestGame", "default", f"Slot{i+2}", game_cfg)
+            storage.load_save(slot, game_cfg)
+
+        backups = self._backup_dirs("TestGame")
+        assert len(backups) == 3
+        # The remaining backups should contain v1, v2, v3 (v0 pruned)
+        contents = sorted((b / "save.sav").read_text() for b in backups)
+        assert contents == ["v1", "v2", "v3"]
+
+    def test_no_backup_when_live_file_missing(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "data")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+        src.unlink()  # live save doesn't exist
+
+        storage.load_save(slot, game_cfg)  # should not raise
+
+        assert self._backup_dirs("TestGame") == []
+
+    def test_no_backup_when_make_backup_false(self, tmp_path):
+        src = make_src_file(tmp_path, "save.sav", "data")
+        game_cfg = cfg_file(src)
+        slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
+
+        storage.load_save(slot, game_cfg, make_backup=False)
+
+        assert self._backup_dirs("TestGame") == []
