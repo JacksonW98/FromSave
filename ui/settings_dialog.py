@@ -29,10 +29,11 @@ class SettingsDialog(QDialog):
             hotkey_ro_toggle=cfg.hotkey_ro_toggle,
             soft_delete=cfg.soft_delete,
             compact_list=cfg.compact_list,
+            hide_details=cfg.hide_details,
         )
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.auto_name_imports,
-            cfg.show_save_path, cfg.soft_delete, cfg.compact_list,
+            cfg.show_save_path, cfg.soft_delete, cfg.compact_list, cfg.hide_details,
             cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle,
         )
         self._initial_games = [
@@ -79,11 +80,14 @@ class SettingsDialog(QDialog):
         self._soft_delete.setChecked(self._cfg.soft_delete)
         self._compact_list = QCheckBox("Compact saves list  (hide dates, show more saves)")
         self._compact_list.setChecked(self._cfg.compact_list)
+        self._hide_details = QCheckBox("Hide details panel  (slot name, notes, and game info)")
+        self._hide_details.setChecked(self._cfg.hide_details)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
         behaviour_layout.addWidget(self._show_save_path)
         behaviour_layout.addWidget(self._soft_delete)
         behaviour_layout.addWidget(self._compact_list)
+        behaviour_layout.addWidget(self._hide_details)
 
         layout.addWidget(behaviour_box)
 
@@ -270,6 +274,7 @@ class SettingsDialog(QDialog):
             self._show_save_path.isChecked(),
             self._soft_delete.isChecked(),
             self._compact_list.isChecked(),
+            self._hide_details.isChecked(),
             self._hk_import.keySequence().toString(),
             self._hk_load.keySequence().toString(),
             self._hk_ro.keySequence().toString(),
@@ -306,6 +311,7 @@ class SettingsDialog(QDialog):
         self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
         self._cfg.soft_delete = self._soft_delete.isChecked()
         self._cfg.compact_list = self._compact_list.isChecked()
+        self._cfg.hide_details = self._hide_details.isChecked()
         self.accept()
 
     @property

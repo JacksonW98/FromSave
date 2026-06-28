@@ -34,11 +34,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("FromSave Manager")
-        self.setMinimumSize(700, 440)
 
         self._config = config.load_config()
-        w, h = self._config.window_width, self._config.window_height
-        self.resize(w if w > 0 else 700, h if h > 0 else 580)
         self._games = storage.load_games()
         self._slots: list[storage.SaveSlot] = []
         self._current_slot: Optional[storage.SaveSlot] = None
@@ -51,6 +48,11 @@ class MainWindow(QMainWindow):
         self._global_hotkeys = GlobalHotkeyListener(self)
 
         self._build_ui()
+        self._apply_info_panel()
+
+        # Restore saved window size (minimum is enforced by _sync_minimum_size via timer)
+        w, h = self._config.window_width, self._config.window_height
+        self.resize(w if w > 0 else 700, h if h > 0 else 580)
 
         self._global_hotkeys.import_triggered.connect(self._on_import_save)
         self._global_hotkeys.load_triggered.connect(self._on_load_save)
@@ -83,8 +85,10 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(1)
         splitter.setChildrenCollapsible(False)
 
-        splitter.addWidget(self._build_slot_panel())
-        splitter.addWidget(self._build_info_panel())
+        self._slot_panel = self._build_slot_panel()
+        self._info_panel = self._build_info_panel()
+        splitter.addWidget(self._slot_panel)
+        splitter.addWidget(self._info_panel)
 
         splitter.setSizes([310, 580])
         splitter.setStretchFactor(0, 0)
@@ -181,10 +185,6 @@ class MainWindow(QMainWindow):
         self.sort_dir_btn.clicked.connect(self._on_sort_dir_toggled)
         header.addWidget(self.sort_dir_btn)
 
-        header.addSpacing(8)
-        self.slot_count_label = QLabel("0 slots")
-        self.slot_count_label.setObjectName("mutedLabel")
-        header.addWidget(self.slot_count_label)
         layout.addLayout(header)
 
         self.slot_list = QListWidget()
@@ -447,9 +447,6 @@ class MainWindow(QMainWindow):
             self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, compact))
         self.slot_list.blockSignals(False)
 
-        count = len(self._slots)
-        self.slot_count_label.setText(f"{count} slot{'s' if count != 1 else ''}")
-
         if self._slots:
             target = 0
             if select_slot:
@@ -650,10 +647,8 @@ class MainWindow(QMainWindow):
         self.slot_list.blockSignals(True)
         self.slot_list.takeItem(row)
         self.slot_list.blockSignals(False)
-        count = len(self._slots)
-        self.slot_count_label.setText(f"{count} slot{'s' if count != 1 else ''}")
         if self._slots:
-            new_row = min(row, count - 1)
+            new_row = min(row, len(self._slots) - 1)
             self.slot_list.blockSignals(True)
             self.slot_list.setCurrentRow(new_row)
             self.slot_list.blockSignals(False)
@@ -845,6 +840,7 @@ class MainWindow(QMainWindow):
             self._reload_slots()
 
         self._apply_path_visibility()
+        self._apply_info_panel()
         self._apply_hotkeys()
         self.status_bar.showMessage("Settings saved.")
 
@@ -880,6 +876,20 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(
                 "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
             )
+
+    def _apply_info_panel(self) -> None:
+        hide = self._config.hide_details
+        self._info_panel.setVisible(not hide)
+        self._slot_panel.setMaximumWidth(16777215 if hide else 380)
+        QTimer.singleShot(0, self._sync_minimum_size)
+
+    def _sync_minimum_size(self) -> None:
+        hint = self.minimumSizeHint()
+        self.setMinimumSize(hint)
+        w = max(self.width(), hint.width())
+        h = max(self.height(), hint.height())
+        if w != self.width() or h != self.height():
+            self.resize(w, h)
 
     def _apply_path_visibility(self) -> None:
         self.info_save_path.setVisible(self._config.show_save_path)

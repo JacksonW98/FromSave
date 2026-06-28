@@ -13,6 +13,7 @@
     "hotkey_ro_toggle": "F6",
     "soft_delete": true,
     "compact_list": true,
+    "hide_details": true,
     "window_width": 700,
     "window_height": 580
 }
