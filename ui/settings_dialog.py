@@ -5,7 +5,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
-    QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit,
+    QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit, QScrollArea,
 )
 
 import config
@@ -18,6 +18,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(520)
+        self.setMaximumHeight(700)
         self._cfg = config.Config(
             confirm_delete=cfg.confirm_delete,
             confirm_replace=cfg.confirm_replace,
@@ -37,9 +38,20 @@ class SettingsDialog(QDialog):
             self.setStyleSheet(f.read().replace("{ui_dir}", ui_dir))
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(0)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        outer.addWidget(scroll, 1)
+
+        container = QWidget()
+        scroll.setWidget(container)
+        layout = QVBoxLayout(container)
         layout.setSpacing(14)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(16, 16, 16, 12)
 
         # Behaviour
         behaviour_box = QGroupBox("Behaviour")
@@ -95,9 +107,18 @@ class SettingsDialog(QDialog):
         paths_outer.addWidget(add_btn, alignment=Qt.AlignLeft)
 
         layout.addWidget(paths_box)
+        layout.addStretch()
 
-        # Buttons
+        # Buttons — outside the scroll area so they're always visible
+        from PySide6.QtWidgets import QFrame
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background: #2a2a32; border: none;")
+        outer.addWidget(divider)
+
         btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(16, 10, 16, 12)
         btn_row.addStretch()
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -106,7 +127,7 @@ class SettingsDialog(QDialog):
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(save_btn)
-        layout.addLayout(btn_row)
+        outer.addLayout(btn_row)
 
     def _make_hotkey_row(self, parent_layout: QVBoxLayout, label: str, current: str) -> QKeySequenceEdit:
         row = QWidget()
