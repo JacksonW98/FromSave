@@ -11,6 +11,10 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("FromSave Manager")
 
+    font = app.font()
+    font.setPointSize(10)
+    app.setFont(font)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
