@@ -1,2 +1,2 @@
 PySide6>=6.7.0
-keyboard>=0.13.5 #TODO global hotkeys - needs Accessibility permission on macOS
+pynput>=1.7.0

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 import config
 import storage
+from hotkeys import GlobalHotkeyListener
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
 
@@ -46,7 +47,14 @@ class MainWindow(QMainWindow):
         self._notes_save_timer.setInterval(600)
         self._notes_save_timer.timeout.connect(self._flush_notes)
 
+        self._global_hotkeys = GlobalHotkeyListener(self)
+
         self._build_ui()
+
+        self._global_hotkeys.import_triggered.connect(self._on_import_save)
+        self._global_hotkeys.load_triggered.connect(self._on_load_save)
+        self._global_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
+
         self._load_data()
         self.apply_stylesheet()
         self._apply_path_visibility()
@@ -861,6 +869,8 @@ class MainWindow(QMainWindow):
         self.load_btn.setText(_btn_text("Load Save", cfg.hotkey_load))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
+        self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle)
+
     def _apply_path_visibility(self) -> None:
         self.info_save_path.setVisible(self._config.show_save_path)
 
@@ -879,6 +889,7 @@ class MainWindow(QMainWindow):
         return True
 
     def closeEvent(self, event) -> None:
+        self._global_hotkeys.stop()
         self._flush_notes()
         self._config.last_game = self.game_combo.currentText()
         self._config.last_profile = self.profile_combo.currentText()
