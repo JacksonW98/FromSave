@@ -29,6 +29,17 @@ class SettingsDialog(QDialog):
             hotkey_ro_toggle=cfg.hotkey_ro_toggle,
             soft_delete=cfg.soft_delete,
         )
+        self._initial_cfg = (
+            cfg.confirm_delete, cfg.confirm_replace, cfg.auto_name_imports,
+            cfg.show_save_path, cfg.soft_delete,
+            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_ro_toggle,
+        )
+        self._initial_games = [
+            (g.name, g.save_mode,
+             g.save_path if g.save_mode != "files" else "",
+             tuple(g.save_paths) if g.save_mode == "files" else ())
+            for g in games
+        ]
         self._game_entries: list[dict] = []
         self._build_ui()
         for game in games:
@@ -203,6 +214,13 @@ class SettingsDialog(QDialog):
         self._paths_layout.addWidget(row)
 
     def _remove_game_row(self, entry: dict) -> None:
+        reply = QMessageBox.question(
+            self, "Remove game",
+            f"Remove '{entry['name']}' from the list?\n\nThis will not delete any saved slots.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
         entry["widget"].hide()
         entry["widget"].deleteLater()
         self._game_entries.remove(entry)
@@ -239,6 +257,39 @@ class SettingsDialog(QDialog):
                 if path:
                     edit.setText(path)
         return handler
+
+    def _has_changes(self) -> bool:
+        current_cfg = (
+            self._confirm_delete.isChecked(),
+            self._confirm_replace.isChecked(),
+            self._auto_name.isChecked(),
+            self._show_save_path.isChecked(),
+            self._soft_delete.isChecked(),
+            self._hk_import.keySequence().toString(),
+            self._hk_load.keySequence().toString(),
+            self._hk_ro.keySequence().toString(),
+        )
+        if current_cfg != self._initial_cfg:
+            return True
+        current_games = []
+        for e in self._game_entries:
+            if e["mode"] == "files":
+                paths = tuple(p.strip() for p in e["edit"].text().split(";") if p.strip())
+                current_games.append((e["name"], e["mode"], "", paths))
+            else:
+                current_games.append((e["name"], e["mode"], e["edit"].text().strip(), ()))
+        return current_games != self._initial_games
+
+    def reject(self) -> None:
+        if self._has_changes():
+            reply = QMessageBox.question(
+                self, "Discard changes",
+                "You have unsaved changes. Close without saving?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+        super().reject()
 
     def _on_save(self) -> None:
         self._cfg.confirm_replace = self._confirm_replace.isChecked()
