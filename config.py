@@ -21,6 +21,8 @@ class Config:
     hotkey_ro_toggle: str = "F6"
     soft_delete: bool = False
     compact_list: bool = False
+    window_width: int = 0
+    window_height: int = 0
 
 
 def load_config() -> Config:
@@ -44,6 +46,8 @@ def load_config() -> Config:
             hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
             soft_delete=data.get("soft_delete", False),
             compact_list=data.get("compact_list", False),
+            window_width=data.get("window_width", 0),
+            window_height=data.get("window_height", 0),
         )
     except (json.JSONDecodeError, OSError):
         return Config()

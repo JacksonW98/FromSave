@@ -34,10 +34,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("FromSave Manager")
-        self.resize(920, 580)
         self.setMinimumSize(700, 440)
 
         self._config = config.load_config()
+        w, h = self._config.window_width, self._config.window_height
+        self.resize(w if w > 0 else 700, h if h > 0 else 580)
         self._games = storage.load_games()
         self._slots: list[storage.SaveSlot] = []
         self._current_slot: Optional[storage.SaveSlot] = None
@@ -912,6 +913,8 @@ class MainWindow(QMainWindow):
         self._config.last_game = self.game_combo.currentText()
         self._config.last_profile = self.profile_combo.currentText()
         self._config.last_slot = self._current_slot.name if self._current_slot else ""
+        self._config.window_width = self.width()
+        self._config.window_height = self.height()
         config.save_config(self._config)
         super().closeEvent(event)
 

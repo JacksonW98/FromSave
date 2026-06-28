@@ -12,5 +12,7 @@
     "hotkey_load": "F9",
     "hotkey_ro_toggle": "F6",
     "soft_delete": true,
-    "compact_list": true
+    "compact_list": true,
+    "window_width": 700,
+    "window_height": 580
 }

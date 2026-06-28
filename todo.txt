@@ -1,9 +1,6 @@
 search
-window size persistence?
 batch delete (maybe)
 auto backup features
-compact mode
-
 
 
 Added:
@@ -12,6 +9,8 @@ Duplicate save
 Copy/move a save to another profile
 show file size in info box
 move deleted saves to system trash rather than delete
+window size persistence
+compact mode
 
 Needs testing:
 read-only toggle
