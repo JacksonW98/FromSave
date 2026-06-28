@@ -252,9 +252,10 @@ class MainWindow(QMainWindow):
 
         self.info_save_path = _InfoRow("Save path", "—")
         self.info_created = _InfoRow("Created", "—")
+        self.info_file_size = _InfoRow("File size", "—")
         self.info_ro_status = _InfoRow("File status", "—")
 
-        for row in (self.info_save_path, self.info_created, self.info_ro_status):
+        for row in (self.info_save_path, self.info_created, self.info_file_size, self.info_ro_status):
             info_layout.addWidget(row)
 
         layout.addWidget(info_box)
@@ -473,6 +474,8 @@ class MainWindow(QMainWindow):
         self.detail_notes.setPlainText(slot.notes)
         self.detail_notes.blockSignals(False)
         self.info_created.set_value(_fmt_dt(slot.date_created))
+        size = _slot_save_size(slot)
+        self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
         if slot.save_file:
             save_path = slot.path / slot.save_file
             is_ro = not os.access(save_path, os.W_OK)
@@ -499,6 +502,7 @@ class MainWindow(QMainWindow):
         self.detail_notes.setPlainText("")
         self.detail_notes.blockSignals(False)
         self.info_created.set_value("—")
+        self.info_file_size.set_value("—")
         self.info_ro_status.set_value("—")
         self.ro_btn.blockSignals(True)
         self.ro_btn.setChecked(False)
@@ -910,6 +914,25 @@ class MainWindow(QMainWindow):
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
             print(f"Style sheet file not found at: {stylesheet_path}")
+
+
+def _slot_save_size(slot: storage.SaveSlot) -> Optional[int]:
+    save_data = slot.path / "save_data"
+    if save_data.exists():
+        return sum(f.stat().st_size for f in save_data.rglob("*") if f.is_file())
+    files = [
+        f for f in slot.path.iterdir()
+        if f.is_file() and f.name not in storage._RESERVED and not f.name.startswith(".")
+    ]
+    return sum(f.stat().st_size for f in files) if files else None
+
+
+def _fmt_size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.2f} MB"
 
 
 def _fmt_dt(dt: Optional[datetime]) -> str:
