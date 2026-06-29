@@ -188,7 +188,7 @@ class SettingsDialog(QDialog):
         row_layout.addWidget(editor)
 
         clear_btn = QPushButton("Clear")
-        clear_btn.setFixedWidth(60)
+        clear_btn.setFixedWidth(72)
         clear_btn.setObjectName("ghostBtn")
         clear_btn.clicked.connect(editor.clear)
         row_layout.addWidget(clear_btn)
