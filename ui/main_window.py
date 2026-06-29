@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         video_row.setSpacing(6)
         self.detail_video_url = QLineEdit()
         self.detail_video_url.setObjectName("detailVideoUrl")
-        self.detail_video_url.setPlaceholderText("YouTube, Vimeo, or direct video URL")
+        self.detail_video_url.setPlaceholderText("YouTube or direct video URL")
         self.detail_video_url.textChanged.connect(self._on_video_changed)
         video_row.addWidget(self.detail_video_url, 1)
 
@@ -619,6 +619,7 @@ class MainWindow(QMainWindow):
         if has_url:
             self._inline_player.load(url.strip())
             self._inline_player.setVisible(True)
+            QTimer.singleShot(50, self.update)
         else:
             self._inline_player.unload()
             self._inline_player.setVisible(False)
