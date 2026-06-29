@@ -138,6 +138,34 @@ QLabel#detailNotes {
   line-height: 1.5;
 }
 
+/* ── Text inputs ── */
+QLineEdit {
+  background: #16161a;
+  border: 1px solid #333340;
+  border-radius: 5px;
+  padding: 5px 10px;
+  min-height: 28px;
+  color: #d4cfc8;
+}
+QLineEdit:hover {
+  border-color: #555566;
+}
+QLineEdit:focus {
+  border-color: #b8962e;
+}
+
+QPlainTextEdit#detailNotes {
+  background: #16161a;
+  border: 1px solid #333340;
+  border-radius: 5px;
+  padding: 8px 10px;
+  color: #d4cfc8;
+  font-size: 12px;
+}
+QPlainTextEdit#detailNotes:focus {
+  border-color: #b8962e;
+}
+
 /* ── Info box ── */
 QFrame#infoBox {
   background: #16161a;

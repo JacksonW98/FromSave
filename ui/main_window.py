@@ -3,20 +3,35 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize, QTimer, QFileSystemWatcher
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QSize, QTimer, QFileSystemWatcher, QUrl, QEvent, QPointF
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QDesktopServices, QPainter, QColor, QPolygonF, QImage
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
     QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox, QMenu,
+    QLineEdit, QFileDialog, QStackedWidget, QSlider, QScrollArea,
 )
 
 import config
 import storage
+import video as video_module
 from hotkeys import GlobalHotkeyListener
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
+
+try:
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+    _HAS_MULTIMEDIA = True
+except ImportError:
+    _HAS_MULTIMEDIA = False
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    _HAS_WEBENGINE = True
+except ImportError:
+    _HAS_WEBENGINE = False
 
 
 def _hotkey_label(key: str) -> str:
@@ -39,11 +54,17 @@ class MainWindow(QMainWindow):
         self._games = storage.load_games()
         self._slots: list[storage.SaveSlot] = []
         self._current_slot: Optional[storage.SaveSlot] = None
+        self._actual_video_url: str = ""
 
         self._notes_save_timer = QTimer(self)
         self._notes_save_timer.setSingleShot(True)
         self._notes_save_timer.setInterval(600)
         self._notes_save_timer.timeout.connect(self._flush_notes)
+
+        self._video_save_timer = QTimer(self)
+        self._video_save_timer.setSingleShot(True)
+        self._video_save_timer.setInterval(600)
+        self._video_save_timer.timeout.connect(self._flush_video)
 
         self._guard_watcher = QFileSystemWatcher(self)
         self._guard_watcher.fileChanged.connect(self._on_guarded_file_changed)
@@ -209,9 +230,14 @@ class MainWindow(QMainWindow):
         return panel
 
     def _build_info_panel(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setContentsMargins(8, 0, 8, 0)
         layout.setSpacing(0)
 
         lbl = QLabel("Slot details")
@@ -244,11 +270,42 @@ class MainWindow(QMainWindow):
         self.detail_notes = QPlainTextEdit()
         self.detail_notes.setObjectName("detailNotes")
         self.detail_notes.setPlaceholderText("No notes.")
-        self.detail_notes.setMaximumHeight(110)
+        self.detail_notes.setMaximumHeight(90)
         self.detail_notes.textChanged.connect(self._on_notes_changed)
         layout.addWidget(self.detail_notes)
 
-        layout.addSpacing(24)
+        layout.addSpacing(16)
+
+        video_lbl = QLabel("Video")
+        video_lbl.setObjectName("fieldLabel")
+        layout.addWidget(video_lbl)
+        layout.addSpacing(4)
+
+        video_row = QHBoxLayout()
+        video_row.setSpacing(6)
+        self.detail_video_url = QLineEdit()
+        self.detail_video_url.setObjectName("detailVideoUrl")
+        self.detail_video_url.setPlaceholderText("YouTube, Vimeo, or direct video URL")
+        self.detail_video_url.textChanged.connect(self._on_video_changed)
+        video_row.addWidget(self.detail_video_url, 1)
+
+        self.browse_video_btn = QPushButton("Browse")
+        self.browse_video_btn.setObjectName("ghostBtn")
+        self.browse_video_btn.clicked.connect(self._on_browse_video)
+        video_row.addWidget(self.browse_video_btn)
+
+        self.clear_video_btn = QPushButton("Clear")
+        self.clear_video_btn.setObjectName("ghostBtn")
+        self.clear_video_btn.setEnabled(False)
+        self.clear_video_btn.clicked.connect(self._on_clear_video)
+        video_row.addWidget(self.clear_video_btn)
+        layout.addLayout(video_row)
+
+        self._inline_player = _InlineVideoPlayer()
+        self._inline_player.setVisible(False)
+        layout.addWidget(self._inline_player)
+
+        layout.addSpacing(16)
 
         info_box = QFrame()
         info_box.setObjectName("infoBox")
@@ -271,7 +328,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(info_box)
         layout.addStretch()
 
-        return panel
+        scroll.setWidget(panel)
+        return scroll
 
     def _build_action_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -472,6 +530,7 @@ class MainWindow(QMainWindow):
 
     def _on_slot_selected(self, row: int) -> None:
         self._flush_notes()
+        self._flush_video()
         if row < 0 or row >= len(self._slots):
             self._clear_detail()
             return
@@ -483,6 +542,7 @@ class MainWindow(QMainWindow):
         self.detail_notes.blockSignals(True)
         self.detail_notes.setPlainText(slot.notes)
         self.detail_notes.blockSignals(False)
+        self._set_video_url(slot.video_url)
         self.info_created.set_value(_fmt_dt(slot.date_created))
         size = _slot_save_size(slot)
         self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
@@ -512,6 +572,7 @@ class MainWindow(QMainWindow):
         self.detail_notes.blockSignals(True)
         self.detail_notes.setPlainText("")
         self.detail_notes.blockSignals(False)
+        self._set_video_url("")
         self.info_created.set_value("—")
         self.info_file_size.set_value("—")
         self.info_ro_status.set_value("—")
@@ -532,6 +593,58 @@ class MainWindow(QMainWindow):
             return
         storage.save_notes(self._current_slot, self.detail_notes.toPlainText())
         self.status_bar.showMessage("Notes saved.", 2000)
+
+    def _set_video_url(self, url: str) -> None:
+        self._actual_video_url = url
+        parsed = QUrl(url.strip()) if url.strip() else QUrl()
+        display = Path(parsed.toLocalFile()).name if parsed.isLocalFile() else url
+        self.detail_video_url.blockSignals(True)
+        self.detail_video_url.setText(display)
+        self.detail_video_url.blockSignals(False)
+        has_url = bool(url.strip())
+        self.clear_video_btn.setEnabled(has_url)
+        if has_url:
+            self._inline_player.load(url.strip())
+            self._inline_player.setVisible(True)
+        else:
+            self._inline_player.unload()
+            self._inline_player.setVisible(False)
+        QTimer.singleShot(0, self._sync_minimum_size)
+
+    def _on_video_changed(self) -> None:
+        text = self.detail_video_url.text().strip()
+        if not QUrl(text).isLocalFile():
+            self._actual_video_url = text
+        self.clear_video_btn.setEnabled(bool(self._actual_video_url))
+        self._video_save_timer.start()
+
+    def _flush_video(self) -> None:
+        self._video_save_timer.stop()
+        if self._current_slot is None:
+            return
+        if not self._current_slot.path.exists():
+            return
+        url = self._actual_video_url
+        if url != self._current_slot.video_url:
+            storage.save_video_url(self._current_slot, url)
+            self.status_bar.showMessage("Video link saved.", 2000)
+        self._set_video_url(url)
+
+    def _on_browse_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select video file", "",
+            "Video files (*.mp4 *.webm *.ogg *.mov *.m4v *.mkv);;All files (*)",
+        )
+        if path:
+            self._set_video_url(QUrl.fromLocalFile(path).toString())
+            self._video_save_timer.start()
+
+    def _on_clear_video(self) -> None:
+        self._inline_player.unload()
+        self._inline_player.setVisible(False)
+        self.detail_video_url.clear()
+        self._flush_video()
+        QTimer.singleShot(0, self._sync_minimum_size)
 
     def _on_ro_toggled(self, checked: bool) -> None:
         if not self._current_slot:
@@ -698,6 +811,7 @@ class MainWindow(QMainWindow):
             if not self._confirm("delete", "Delete slot", msg):
                 return
         self._flush_notes()
+        self._flush_video()
         self._current_slot = None
         try:
             storage.delete_slot(slot, soft=soft)
@@ -725,6 +839,7 @@ class MainWindow(QMainWindow):
         previous = self.profile_combo.currentText()
         ProfilesDialog(game, self).exec()
         self._flush_notes()
+        self._flush_video()
         self._current_slot = None
         profiles = storage.load_profiles(game)
         self.profile_combo.blockSignals(True)
@@ -775,6 +890,9 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction("Rename", self._on_rename_slot)
         menu.addAction("Load save", self._on_load_save)
+        if self._current_slot and self._current_slot.video_url.strip():
+            url = self._current_slot.video_url.strip()
+            menu.addAction("Open video in browser", lambda: QDesktopServices.openUrl(QUrl(url)))
         menu.addSeparator()
         menu.addAction("Duplicate", self._on_duplicate_slot)
         menu.addAction("Copy to profile…", lambda: self._on_copy_to_profile(move=False))
@@ -838,6 +956,7 @@ class MainWindow(QMainWindow):
         slot_name = slot.name
         if move:
             self._flush_notes()
+            self._flush_video()
             self._current_slot = None
             try:
                 storage.delete_slot(slot, soft=self._config.soft_delete)
@@ -986,6 +1105,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._global_hotkeys.stop()
         self._flush_notes()
+        self._flush_video()
         self._config.last_game = self.game_combo.currentText()
         self._config.last_profile = self.profile_combo.currentText()
         self._config.last_slot = self._current_slot.name if self._current_slot else ""
@@ -1134,3 +1254,359 @@ class _Banner(QFrame):
         lbl.setStyleSheet(f"color: {fg}; font-size: 12px; background: transparent;")
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
+
+
+class _InlineVideoPlayer(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._url = ""
+        self._player = None
+        self._audio = None
+        self._seeking = False
+        self._thumb_player = None
+        self._thumb_sink = None
+
+        self.setFocusPolicy(Qt.ClickFocus)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 0)
+        outer.setSpacing(0)
+
+        self._stack = QStackedWidget()
+        self._stack.setFixedHeight(320)
+
+        if _HAS_MULTIMEDIA:
+            self._video_widget = QVideoWidget()
+            self._video_widget.setStyleSheet("background: #000;")
+            self._video_widget.installEventFilter(self)
+        else:
+            self._video_widget = QWidget()
+            self._video_widget.setStyleSheet("background: #000;")
+
+        self._video_container = QWidget()
+        vc_layout = QVBoxLayout(self._video_container)
+        vc_layout.setContentsMargins(0, 0, 0, 0)
+        vc_layout.setSpacing(0)
+        vc_layout.addWidget(self._video_widget)
+        self._play_overlay = _PlayOverlay(self._toggle, self._video_container)
+        self._play_overlay.hide()
+        self._video_container.installEventFilter(self)
+
+        self._stack.addWidget(self._video_container)  # index 0: local
+
+        if _HAS_WEBENGINE:
+            self._web_view = QWebEngineView()
+        else:
+            self._web_view = QWidget()
+            self._web_view.setStyleSheet("background: #000;")
+        self._stack.addWidget(self._web_view)  # index 1: web
+
+        outer.addWidget(self._stack, 1)
+
+        # Controls for local video
+        self._local_bar = QWidget()
+        self._local_bar.setStyleSheet("background: #16161e;")
+        local_ctrl = QVBoxLayout(self._local_bar)
+        local_ctrl.setContentsMargins(8, 4, 8, 4)
+        local_ctrl.setSpacing(3)
+
+        self._seek = QSlider(Qt.Horizontal)
+        self._seek.setRange(0, 0)
+        self._seek.sliderPressed.connect(self._on_seek_pressed)
+        self._seek.sliderMoved.connect(self._on_seek_moved)
+        self._seek.sliderReleased.connect(self._on_seek_released)
+        local_ctrl.addWidget(self._seek)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+
+        self._play_btn = QPushButton("Play")
+        self._play_btn.setObjectName("ghostBtn")
+        self._play_btn.clicked.connect(self._toggle)
+        btn_row.addWidget(self._play_btn)
+
+        self._time_lbl = QLabel("0:00 / 0:00")
+        self._time_lbl.setStyleSheet("color: #888899; font-size: 11px;")
+        btn_row.addWidget(self._time_lbl)
+
+        btn_row.addStretch()
+
+        self._vol = QSlider(Qt.Horizontal)
+        self._vol.setRange(0, 100)
+        self._vol.setValue(100)
+        self._vol.setFixedWidth(64)
+        self._vol.valueChanged.connect(self._set_volume)
+        btn_row.addWidget(self._vol)
+
+        browser_btn = QPushButton("Open in player")
+        browser_btn.setObjectName("ghostBtn")
+        browser_btn.clicked.connect(self._open_in_browser)
+        btn_row.addWidget(browser_btn)
+
+        local_ctrl.addLayout(btn_row)
+        outer.addWidget(self._local_bar)
+
+        # Bar for web video (open in browser)
+        self._web_bar = QWidget()
+        self._web_bar.setStyleSheet("background: #16161e;")
+        web_row = QHBoxLayout(self._web_bar)
+        web_row.setContentsMargins(8, 6, 8, 6)
+        web_row.addStretch()
+        web_browser_btn = QPushButton("Open in browser")
+        web_browser_btn.setObjectName("ghostBtn")
+        web_browser_btn.clicked.connect(self._open_web_in_browser)
+        web_row.addWidget(web_browser_btn)
+        outer.addWidget(self._web_bar)
+
+        self._local_bar.hide()
+        self._web_bar.hide()
+
+    def load(self, url: str) -> None:
+        self._stop()
+        self._url = url
+        if not url:
+            return
+        parsed = QUrl(url)
+        if parsed.isLocalFile():
+            self._load_local(parsed)
+        else:
+            self._load_web(url)
+
+    def unload(self) -> None:
+        self._stop()
+        if _HAS_WEBENGINE:
+            self._web_view.load(QUrl("about:blank"))
+        self._url = ""
+
+    def _load_local(self, parsed: QUrl) -> None:
+        if not _HAS_MULTIMEDIA:
+            return
+        if _HAS_WEBENGINE:
+            self._web_view.load(QUrl("about:blank"))
+        self._stack.setCurrentIndex(0)
+        self._local_bar.show()
+        self._web_bar.hide()
+        self._player = QMediaPlayer(self)
+        self._audio = QAudioOutput(self)
+        self._audio.setVolume(self._vol.value() / 100.0)
+        self._player.setAudioOutput(self._audio)
+        self._player.setVideoOutput(self._video_widget)
+        self._player.setSource(parsed)
+        self._player.positionChanged.connect(self._on_position)
+        self._player.durationChanged.connect(self._on_duration)
+        self._player.playbackStateChanged.connect(self._on_state)
+        self._play_overlay.set_thumbnail(None)
+        self._play_overlay.setGeometry(self._video_container.rect())
+        self._play_overlay.show()
+        self._play_overlay.raise_()
+        self._grab_thumbnail(parsed)
+
+    def _load_web(self, url: str) -> None:
+        if not _HAS_WEBENGINE:
+            return
+        self._stack.setCurrentIndex(1)
+        self._local_bar.hide()
+        self._web_bar.show()
+        html = video_module.embed_html(url, autoplay=False) or video_module.unsupported_html()
+        self._web_view.setHtml(html, QUrl("http://localhost/"))
+
+    def _stop(self) -> None:
+        if self._thumb_player is not None:
+            self._thumb_player.stop()
+            self._thumb_player.deleteLater()
+            self._thumb_player = None
+        if self._thumb_sink is not None:
+            self._thumb_sink.deleteLater()
+            self._thumb_sink = None
+        if self._player is not None:
+            self._player.positionChanged.disconnect(self._on_position)
+            self._player.durationChanged.disconnect(self._on_duration)
+            self._player.playbackStateChanged.disconnect(self._on_state)
+            self._player.stop()
+            self._player.deleteLater()
+            self._player = None
+        if self._audio is not None:
+            self._audio.deleteLater()
+            self._audio = None
+        self._play_overlay.hide()
+        self._seeking = False
+        self._seek.blockSignals(True)
+        self._seek.setValue(0)
+        self._seek.setRange(0, 0)
+        self._seek.blockSignals(False)
+        self._time_lbl.setText("0:00 / 0:00")
+        self._play_btn.setText("Play")
+        self._local_bar.hide()
+        self._web_bar.hide()
+
+    def _grab_thumbnail(self, url: QUrl) -> None:
+        if not _HAS_MULTIMEDIA:
+            return
+        self._thumb_player = QMediaPlayer(self)
+        self._thumb_sink = QVideoSink(self)
+        self._thumb_player.setVideoSink(self._thumb_sink)
+        self._thumb_player.setSource(url)
+
+        def on_duration(ms: int) -> None:
+            if self._thumb_player is None or ms <= 0:
+                return
+            seek_ms = min(500, max(0, ms - 100))
+            self._thumb_player.setPosition(seek_ms)
+            self._thumb_player.play()
+
+        def on_frame(frame) -> None:
+            if self._thumb_player is None or not frame.isValid():
+                return
+            img = frame.toImage()
+            tp, ts = self._thumb_player, self._thumb_sink
+            self._thumb_player = None
+            self._thumb_sink = None
+            tp.stop()
+            tp.deleteLater()
+            ts.deleteLater()
+            if not img.isNull():
+                self._play_overlay.set_thumbnail(img)
+
+        self._thumb_player.durationChanged.connect(on_duration)
+        self._thumb_sink.videoFrameChanged.connect(on_frame)
+
+    def _open_in_browser(self) -> None:
+        if self._player is not None:
+            self._player.pause()
+        QDesktopServices.openUrl(QUrl(self._url))
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._video_widget and event.type() == QEvent.Type.MouseButtonRelease:
+            self._toggle()
+            self.setFocus()
+            return True
+        if obj is self._video_container and event.type() == QEvent.Type.Resize:
+            self._play_overlay.setGeometry(obj.rect())
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            self._toggle()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _open_web_in_browser(self) -> None:
+        if not _HAS_WEBENGINE:
+            QDesktopServices.openUrl(QUrl(self._url))
+            return
+        self._web_view.page().runJavaScript(
+            "(function(){"
+            "var f=document.querySelector('iframe');if(!f)return;"
+            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"pauseVideo\",\"args\":\"\"}','*');"
+            "f.contentWindow.postMessage('{\"method\":\"pause\"}','*');"
+            "})()"
+        )
+        self._web_view.page().runJavaScript(
+            "window._embed_time||0",
+            self._open_browser_at_time,
+        )
+
+    def _open_browser_at_time(self, t) -> None:
+        url = self._url
+        if isinstance(t, (int, float)) and t > 1 and video_module.youtube_video_id(url):
+            sep = '&' if '?' in url else '?'
+            url = f"{url}{sep}t={int(t)}"
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _toggle(self) -> None:
+        if self._player is None:
+            return
+        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._player.pause()
+        else:
+            self._player.play()
+
+    def _on_seek_pressed(self) -> None:
+        self._seeking = True
+
+    def _on_seek_moved(self, ms: int) -> None:
+        dur = self._player.duration() if self._player is not None else 0
+        self._time_lbl.setText(f"{_fmt_ms(ms)} / {_fmt_ms(dur)}")
+        if self._player is not None:
+            self._player.setPosition(ms)
+
+    def _on_seek_released(self) -> None:
+        self._seeking = False
+        if self._player is not None:
+            self._player.setPosition(self._seek.value())
+
+    def _set_volume(self, v: int) -> None:
+        if self._audio is not None:
+            self._audio.setVolume(v / 100.0)
+
+    def _on_position(self, ms: int) -> None:
+        if not self._seeking:
+            self._seek.blockSignals(True)
+            self._seek.setValue(ms)
+            self._seek.blockSignals(False)
+            dur = self._player.duration() if self._player is not None else 0
+            self._time_lbl.setText(f"{_fmt_ms(ms)} / {_fmt_ms(dur)}")
+
+    def _on_duration(self, ms: int) -> None:
+        self._seek.setRange(0, ms)
+
+    def _on_state(self, state) -> None:
+        playing = state == QMediaPlayer.PlaybackState.PlayingState
+        self._play_btn.setText("Pause" if playing else "Play")
+        if playing:
+            self._play_overlay.hide()
+
+
+class _PlayOverlay(QWidget):
+    def __init__(self, on_click, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._on_click = on_click
+        self._thumbnail: QImage | None = None
+
+    def set_thumbnail(self, img: QImage | None) -> None:
+        self._thumbnail = img
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_click()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._thumbnail is not None and not self._thumbnail.isNull():
+            scaled = self._thumbnail.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            p.drawImage(x, y, scaled)
+            p.fillRect(self.rect(), QColor(0, 0, 0, 60))
+        cx = self.width() / 2
+        cy = self.height() / 2
+        r = 36.0
+        p.setBrush(QColor(255, 255, 255, 200))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        tri_h = r * 0.85
+        tri_w = tri_h * 0.9
+        ox = r * 0.12
+        p.setBrush(QColor(20, 20, 20, 220))
+        p.drawPolygon(QPolygonF([
+            QPointF(cx - tri_w / 2 + ox, cy - tri_h / 2),
+            QPointF(cx - tri_w / 2 + ox, cy + tri_h / 2),
+            QPointF(cx + tri_w / 2 + ox, cy),
+        ]))
+
+
+def _fmt_ms(ms: int) -> str:
+    s = ms // 1000
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02}:{s:02}"
+    return f"{m}:{s:02}"

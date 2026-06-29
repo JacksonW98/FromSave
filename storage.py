@@ -31,6 +31,7 @@ class SaveSlot:
     date_modified: Optional[datetime]
     notes: str
     save_file: Optional[str]  # None for folder/files modes
+    video_url: str = ""
 
 
 def load_games() -> list[GameConfig]:
@@ -106,8 +107,11 @@ def _read_slot(slot_dir: Path, game: str, profile: str) -> Optional[SaveSlot]:
     if not notes_file.exists():
         notes_file.write_text("", encoding="utf-8")
 
-    date_created, date_modified = _parse_meta(meta_file)
+    meta = _read_meta(meta_file)
+    date_created = _parse_iso(meta.get("created"))
+    date_modified = _parse_iso(meta.get("modified"))
     notes = notes_file.read_text(encoding="utf-8").strip()
+    video_url = meta.get("video_url", "")
 
     return SaveSlot(
         name=slot_dir.name,
@@ -118,6 +122,7 @@ def _read_slot(slot_dir: Path, game: str, profile: str) -> Optional[SaveSlot]:
         date_modified=date_modified,
         notes=notes,
         save_file=save_file,
+        video_url=video_url,
     )
 
 
@@ -133,22 +138,31 @@ def _create_meta(meta_file: Path, stat: os.stat_result) -> None:
     meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
 
 
-def _parse_meta(meta_file: Path) -> tuple[Optional[datetime], Optional[datetime]]:
+def _read_meta(meta_file: Path) -> dict:
     try:
         with open(meta_file, encoding="utf-8") as f:
-            meta = json.load(f)
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
-        return None, None
+        return {}
 
-    date_created = _parse_iso(meta.get("created"))
-    date_modified = _parse_iso(meta.get("modified"))
-    return date_created, date_modified
+
+def _write_meta(meta_file: Path, updates: dict) -> None:
+    meta = _read_meta(meta_file)
+    meta.update(updates)
+    meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
 
 
 def save_notes(slot: SaveSlot, text: str) -> None:
     notes_file = slot.path / "notes.txt"
     notes_file.write_text(text, encoding="utf-8")
     slot.notes = text
+
+
+def save_video_url(slot: SaveSlot, url: str) -> None:
+    url = url.strip()
+    _write_meta(slot.path / "meta.json", {"video_url": url})
+    slot.video_url = url
 
 
 def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -> SaveSlot:
@@ -188,6 +202,7 @@ def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -
         date_modified=now,
         notes="",
         save_file=save_file,
+        video_url="",
     )
 
 
@@ -340,11 +355,10 @@ def duplicate_slot(slot: SaveSlot, new_name: str) -> SaveSlot:
     new_dir = slot.path.parent / new_name
     shutil.copytree(slot.path, new_dir)
     now = datetime.now()
-    (new_dir / "meta.json").write_text(
-        json.dumps({"created": now.isoformat(timespec="seconds"),
-                    "modified": now.isoformat(timespec="seconds")}, indent=4),
-        encoding="utf-8",
-    )
+    _write_meta(new_dir / "meta.json", {
+        "created": now.isoformat(timespec="seconds"),
+        "modified": now.isoformat(timespec="seconds"),
+    })
     return _read_slot(new_dir, slot.game, slot.profile)
 
 
@@ -353,11 +367,10 @@ def copy_slot_to_profile(slot: SaveSlot, target_profile: str, new_name: str) -> 
     new_dir = SAVES_DIR / slot.game / target_profile / new_name
     shutil.copytree(slot.path, new_dir)
     now = datetime.now()
-    (new_dir / "meta.json").write_text(
-        json.dumps({"created": now.isoformat(timespec="seconds"),
-                    "modified": now.isoformat(timespec="seconds")}, indent=4),
-        encoding="utf-8",
-    )
+    _write_meta(new_dir / "meta.json", {
+        "created": now.isoformat(timespec="seconds"),
+        "modified": now.isoformat(timespec="seconds"),
+    })
     return _read_slot(new_dir, slot.game, target_profile)
 
 
@@ -391,12 +404,12 @@ def save_slot_order(game: str, profile: str, names: list[str]) -> None:
 
 
 def _update_meta_modified(meta_file: Path, now: datetime) -> None:
-    date_created, _ = _parse_meta(meta_file)
-    meta = {
-        "created": (date_created or now).isoformat(timespec="seconds"),
+    meta = _read_meta(meta_file)
+    created = _parse_iso(meta.get("created")) or now
+    _write_meta(meta_file, {
+        "created": created.isoformat(timespec="seconds"),
         "modified": now.isoformat(timespec="seconds"),
-    }
-    meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
+    })
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:

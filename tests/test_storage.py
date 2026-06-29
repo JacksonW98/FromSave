@@ -836,3 +836,50 @@ class TestLoadBackups:
         storage.load_save(slot, game_cfg, make_backup=False)
 
         assert self._backup_dirs("TestGame") == []
+
+
+# ── video_url ────────────────────────────────────────────────────────────────
+
+class TestVideoUrl:
+    def test_save_and_load_video_url(self, tmp_path):
+        src = make_src_file(tmp_path)
+        slot = storage.import_save("TestGame", "default", "Slot1", cfg_file(src))
+        url = "https://youtu.be/dQw4w9WgXcQ"
+
+        storage.save_video_url(slot, url)
+
+        meta = json.loads((slot.path / "meta.json").read_text())
+        assert meta["video_url"] == url
+        assert slot.video_url == url
+
+        reloaded = storage.load_slots("TestGame", "default")[0]
+        assert reloaded.video_url == url
+
+    def test_replace_save_preserves_video_url(self, tmp_path):
+        src = make_src_file(tmp_path, content="original")
+        slot = storage.import_save("TestGame", "default", "Slot1", cfg_file(src))
+        storage.save_video_url(slot, "https://vimeo.com/123")
+
+        src.write_text("updated")
+        storage.replace_save(slot, cfg_file(src))
+
+        meta = json.loads((slot.path / "meta.json").read_text())
+        assert meta["video_url"] == "https://vimeo.com/123"
+
+    def test_clear_video_url(self, tmp_path):
+        src = make_src_file(tmp_path)
+        slot = storage.import_save("TestGame", "default", "Slot1", cfg_file(src))
+        storage.save_video_url(slot, "https://example.com/v.mp4")
+        storage.save_video_url(slot, "")
+
+        reloaded = storage.load_slots("TestGame", "default")[0]
+        assert reloaded.video_url == ""
+
+    def test_duplicate_slot_copies_video_url(self, tmp_path):
+        src = make_src_file(tmp_path)
+        slot = storage.import_save("TestGame", "default", "Slot1", cfg_file(src))
+        storage.save_video_url(slot, "https://youtu.be/abc12345678")
+
+        dup = storage.duplicate_slot(slot, "Slot1 copy")
+
+        assert dup.video_url == "https://youtu.be/abc12345678"
