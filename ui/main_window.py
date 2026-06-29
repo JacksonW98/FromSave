@@ -1319,7 +1319,7 @@ class _InlineVideoPlayer(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self._play_btn = QPushButton("Play")
+        self._play_btn = QPushButton("▶")
         self._play_btn.setObjectName("ghostBtn")
         self._play_btn.clicked.connect(self._toggle)
         btn_row.addWidget(self._play_btn)
@@ -1434,7 +1434,7 @@ class _InlineVideoPlayer(QWidget):
         self._seek.setRange(0, 0)
         self._seek.blockSignals(False)
         self._time_lbl.setText("0:00 / 0:00")
-        self._play_btn.setText("Play")
+        self._play_btn.setText("▶")
         self._local_bar.hide()
         self._web_bar.hide()
 
@@ -1552,7 +1552,7 @@ class _InlineVideoPlayer(QWidget):
 
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
-        self._play_btn.setText("Pause" if playing else "Play")
+        self._play_btn.setText("⏸" if playing else "▶")
         if playing:
             self._play_overlay.hide()
 
