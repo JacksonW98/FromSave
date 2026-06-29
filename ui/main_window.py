@@ -1388,7 +1388,12 @@ class _InlineVideoPlayer(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self._play_btn = QPushButton("▶")
+        _ui_dir = Path(__file__).parent
+        self._icon_play = QIcon(str(_ui_dir / "play.svg"))
+        self._icon_pause = QIcon(str(_ui_dir / "pause.svg"))
+        self._play_btn = QPushButton()
+        self._play_btn.setIcon(self._icon_play)
+        self._play_btn.setIconSize(QSize(14, 14))
         self._play_btn.setObjectName("ghostBtn")
         self._play_btn.clicked.connect(self._toggle)
         btn_row.addWidget(self._play_btn)
@@ -1508,7 +1513,7 @@ class _InlineVideoPlayer(QWidget):
         self._seek.setRange(0, 0)
         self._seek.blockSignals(False)
         self._time_lbl.setText("0:00 / 0:00")
-        self._play_btn.setText("▶")
+        self._play_btn.setIcon(self._icon_play)
         self._local_bar.hide()
         self._web_bar.hide()
 
@@ -1627,7 +1632,7 @@ class _InlineVideoPlayer(QWidget):
 
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
-        self._play_btn.setText("⏸" if playing else "▶")
+        self._play_btn.setIcon(self._icon_pause if playing else self._icon_play)
         if playing:
             self._play_overlay.hide()
 
