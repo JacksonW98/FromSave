@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox, QListWidget, QListWidgetItem, QLabel,
     QPushButton, QStatusBar, QSplitter, QFrame,
     QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox, QMenu,
-    QLineEdit, QFileDialog, QStackedWidget, QSlider, QScrollArea,
+    QLineEdit, QFileDialog, QStackedWidget, QSlider, QScrollArea, QDialog, QCheckBox,
 )
 
 import config
@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
 
         self._confirm_dialog: Optional[QMessageBox] = None
         self._confirm_action: Optional[str] = None  # "replace" | "delete"
+        self._protect_warning_shown: bool = False
 
         self._global_hotkeys = GlobalHotkeyListener(self)
 
@@ -322,7 +323,7 @@ class MainWindow(QMainWindow):
         self.info_save_path = _InfoRow("Save path", "—")
         self.info_created = _InfoRow("Created", "—")
         self.info_file_size = _InfoRow("File size", "—")
-        self.info_ro_status = _InfoRow("Protection", "—")
+        self.info_ro_status = _InfoRow("Lock", "—")
 
         for row in (self.info_save_path, self.info_created, self.info_file_size, self.info_ro_status):
             info_layout.addWidget(row)
@@ -357,7 +358,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
-        self.ro_btn = QPushButton(_btn_text("Protect save", self._config.hotkey_ro_toggle))
+        self.ro_btn = QPushButton(_btn_text("Lock slot", self._config.hotkey_ro_toggle))
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
         self.ro_btn.setEnabled(False)
@@ -562,7 +563,7 @@ class MainWindow(QMainWindow):
         if save_files:
             is_guarded = (self._guard_slot is not None
                           and self._guard_slot.path == slot.path)
-            self.info_ro_status.set_value("Protected" if is_guarded else "Unprotected")
+            self.info_ro_status.set_value("Locked" if is_guarded else "Unlocked")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(is_guarded)
             self.ro_btn.setText(self._ro_btn_text(is_guarded))
@@ -659,6 +660,12 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._sync_minimum_size)
 
     def _on_ro_toggled(self, checked: bool) -> None:
+        if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
+            if not self._show_protect_warning():
+                self.ro_btn.blockSignals(True)
+                self.ro_btn.setChecked(False)
+                self.ro_btn.blockSignals(False)
+                return
         if not self._current_slot:
             return
         save_files = _slot_save_files(self._current_slot)
@@ -684,10 +691,53 @@ class MainWindow(QMainWindow):
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
         self.ro_btn.setText(self._ro_btn_text(checked))
-        self.info_ro_status.set_value("Protected" if checked else "Unprotected")
+        self.info_ro_status.set_value("Locked" if checked else "Unlocked")
         self.status_bar.showMessage(
-            f"'{label}' {'is now protected.' if checked else 'is now unprotected.'}"
+            f"'{label}' {'is now locked.' if checked else 'is now unlocked.'}"
         )
+
+    def _show_protect_warning(self) -> bool:
+        """Show the protect-save warning. Returns True if the user confirmed, False if cancelled."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Lock slot — heads up")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(14)
+        layout.setContentsMargins(20, 20, 20, 16)
+
+        msg = QLabel(
+            "<b>When a slot is locked, your game's save file will be overwritten with "
+            "the selected slot whenever the game tries to change it.</b><br><br>"
+            "This prevents the game from saving progress and means any new save data the game "
+            "tries to write will be lost. Unlock the slot before saving in-game."
+        )
+        msg.setWordWrap(True)
+        msg.setTextFormat(Qt.RichText)
+        layout.addWidget(msg)
+
+        never_checkbox = QCheckBox("Don't show this again")
+        layout.addWidget(never_checkbox)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+        confirm_btn = QPushButton("Got it")
+        confirm_btn.setObjectName("primaryBtn")
+        confirm_btn.setDefault(True)
+        btn_row.addWidget(confirm_btn)
+        layout.addLayout(btn_row)
+
+        def _on_confirm():
+            if never_checkbox.isChecked():
+                self._config.protect_warning_acknowledged = True
+                import config as _cfg_mod
+                _cfg_mod.save_config(self._config)
+            else:
+                self._protect_warning_shown = True
+            dlg.accept()
+
+        confirm_btn.clicked.connect(_on_confirm)
+        return dlg.exec() == QDialog.Accepted
 
     def _on_guarded_file_changed(self, path: str) -> None:
         if self._guard_slot is None or self._guard_cfg is None:
@@ -706,7 +756,7 @@ class MainWindow(QMainWindow):
                 f"Protected: restored '{self._guard_slot.name}'.", 4000
             )
         except OSError as e:
-            self.status_bar.showMessage(f"Protection: restore failed — {e}")
+            self.status_bar.showMessage(f"Lock: restore failed — {e}")
         # Re-add after our write is done so the next game save is caught
         self._guard_watcher.addPath(path)
 
@@ -773,7 +823,7 @@ class MainWindow(QMainWindow):
             return
         slot = self._slots[row]
         if self._guard_slot is not None and self._guard_slot.path == slot.path:
-            self.status_bar.showMessage(f"'{slot.name}' is protected — disable protection before replacing.")
+            self.status_bar.showMessage(f"'{slot.name}' is locked — unlock the slot before replacing.")
             return
         if self._config.confirm_replace:
             if not self._confirm("replace", "Replace save",
@@ -1039,8 +1089,8 @@ class MainWindow(QMainWindow):
     def _ro_btn_text(self, is_on: bool) -> str:
         key = _hotkey_label(self._config.hotkey_ro_toggle)
         if is_on:
-            return _btn_text("Save protected", key)
-        return _btn_text("Protect save", key)
+            return _btn_text("Slot locked", key)
+        return _btn_text("Lock slot", key)
 
     def _apply_hotkeys(self) -> None:
         for sc in getattr(self, "_shortcuts", []):

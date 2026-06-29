@@ -23,6 +23,7 @@ class Config:
     hotkey_next_slot: str = ""
     hotkey_prev_slot: str = ""
     global_hotkeys_enabled: bool = True
+    protect_warning_acknowledged: bool = False
     soft_delete: bool = False
     compact_list: bool = False
     hide_details: bool = False
@@ -53,6 +54,7 @@ def load_config() -> Config:
             hotkey_next_slot=data.get("hotkey_next_slot", ""),
             hotkey_prev_slot=data.get("hotkey_prev_slot", ""),
             global_hotkeys_enabled=data.get("global_hotkeys_enabled", True),
+            protect_warning_acknowledged=data.get("protect_warning_acknowledged", False),
             soft_delete=data.get("soft_delete", False),
             compact_list=data.get("compact_list", False),
             hide_details=data.get("hide_details", False),

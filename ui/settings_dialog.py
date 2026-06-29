@@ -129,7 +129,7 @@ class SettingsDialog(QDialog):
         self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
         self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
         self._hk_replace = self._make_hotkey_row(hotkeys_layout, "Replace save", self._cfg.hotkey_replace)
-        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Protect save", self._cfg.hotkey_ro_toggle)
+        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Lock slot", self._cfg.hotkey_ro_toggle)
         self._hk_next_slot = self._make_hotkey_row(hotkeys_layout, "Next slot", self._cfg.hotkey_next_slot)
         self._hk_prev_slot = self._make_hotkey_row(hotkeys_layout, "Previous slot", self._cfg.hotkey_prev_slot)
         layout.addWidget(hotkeys_box)
