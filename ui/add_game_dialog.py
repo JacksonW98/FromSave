@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QRadioButton, QGroupBox,
-    QFileDialog,
+    QFileDialog, QFrame,
 )
 
 
@@ -17,6 +17,21 @@ class AddGameDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(14)
         layout.setContentsMargins(16, 16, 16, 16)
+
+        # Warning
+        warning = QLabel(
+            "⚠  FromSave has only been tested with a small number of games. "
+            "It may not work correctly with every title — use at your own risk and always "
+            "keep backups of any save files you care about."
+        )
+        warning.setWordWrap(True)
+        warning.setStyleSheet("color: #aa8833; font-size: 12px;")
+        layout.addWidget(warning)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setStyleSheet("color: #2a2a3a;")
+        layout.addWidget(divider)
 
         # Name
         name_lbl = QLabel("Game name")
