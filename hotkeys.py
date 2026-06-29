@@ -57,15 +57,26 @@ class GlobalHotkeyListener(QObject):
     load_triggered = Signal()
     replace_triggered = Signal()
     ro_toggle_triggered = Signal()
+    next_slot_triggered = Signal()
+    prev_slot_triggered = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._listener = None
 
-    def start(self, hotkey_import: str, hotkey_load: str, hotkey_replace: str, hotkey_ro: str) -> bool:
-        """Start the listener. Returns True if started, False if unavailable or not trusted."""
+    def start(
+        self,
+        hotkey_import: str,
+        hotkey_load: str,
+        hotkey_replace: str,
+        hotkey_ro: str,
+        hotkey_next_slot: str = "",
+        hotkey_prev_slot: str = "",
+        enabled: bool = True,
+    ) -> bool:
+        """Start the listener. Returns True if started, False if unavailable, not trusted, or disabled."""
         self.stop()
-        if not _AVAILABLE or not _is_trusted():
+        if not enabled or not _AVAILABLE or not _is_trusted():
             return False
 
         bindings: dict[str, object] = {}
@@ -77,6 +88,10 @@ class GlobalHotkeyListener(QObject):
             bindings[pk] = self.replace_triggered.emit
         if pk := _qt_to_pynput(hotkey_ro):
             bindings[pk] = self.ro_toggle_triggered.emit
+        if pk := _qt_to_pynput(hotkey_next_slot):
+            bindings[pk] = self.next_slot_triggered.emit
+        if pk := _qt_to_pynput(hotkey_prev_slot):
+            bindings[pk] = self.prev_slot_triggered.emit
 
         if not bindings:
             return False

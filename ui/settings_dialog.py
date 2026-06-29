@@ -33,6 +33,9 @@ class SettingsDialog(QDialog):
             hotkey_load=cfg.hotkey_load,
             hotkey_replace=cfg.hotkey_replace,
             hotkey_ro_toggle=cfg.hotkey_ro_toggle,
+            hotkey_next_slot=cfg.hotkey_next_slot,
+            hotkey_prev_slot=cfg.hotkey_prev_slot,
+            global_hotkeys_enabled=cfg.global_hotkeys_enabled,
             soft_delete=cfg.soft_delete,
             compact_list=cfg.compact_list,
             hide_details=cfg.hide_details,
@@ -43,6 +46,7 @@ class SettingsDialog(QDialog):
             cfg.confirm_delete, cfg.confirm_replace, cfg.auto_name_imports,
             cfg.show_save_path, cfg.soft_delete, cfg.compact_list, cfg.hide_details,
             cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle,
+            cfg.hotkey_next_slot, cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -118,10 +122,16 @@ class SettingsDialog(QDialog):
         hotkeys_layout = QVBoxLayout(hotkeys_box)
         hotkeys_layout.setSpacing(6)
 
+        self._global_hotkeys_enabled = QCheckBox("Enable global hotkeys (work while the app is in the background)")
+        self._global_hotkeys_enabled.setChecked(self._cfg.global_hotkeys_enabled)
+        hotkeys_layout.addWidget(self._global_hotkeys_enabled)
+
         self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
         self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
         self._hk_replace = self._make_hotkey_row(hotkeys_layout, "Replace save", self._cfg.hotkey_replace)
         self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Protect save", self._cfg.hotkey_ro_toggle)
+        self._hk_next_slot = self._make_hotkey_row(hotkeys_layout, "Next slot", self._cfg.hotkey_next_slot)
+        self._hk_prev_slot = self._make_hotkey_row(hotkeys_layout, "Previous slot", self._cfg.hotkey_prev_slot)
         layout.addWidget(hotkeys_box)
 
         # Game save paths
@@ -288,6 +298,9 @@ class SettingsDialog(QDialog):
             self._hk_load.keySequence().toString(),
             self._hk_replace.keySequence().toString(),
             self._hk_ro.keySequence().toString(),
+            self._hk_next_slot.keySequence().toString(),
+            self._hk_prev_slot.keySequence().toString(),
+            self._global_hotkeys_enabled.isChecked(),
         )
         if current_cfg != self._initial_cfg:
             return True
@@ -320,6 +333,9 @@ class SettingsDialog(QDialog):
         self._cfg.hotkey_load = self._hk_load.keySequence().toString()
         self._cfg.hotkey_replace = self._hk_replace.keySequence().toString()
         self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
+        self._cfg.hotkey_next_slot = self._hk_next_slot.keySequence().toString()
+        self._cfg.hotkey_prev_slot = self._hk_prev_slot.keySequence().toString()
+        self._cfg.global_hotkeys_enabled = self._global_hotkeys_enabled.isChecked()
         self._cfg.soft_delete = self._soft_delete.isChecked()
         self._cfg.compact_list = self._compact_list.isChecked()
         self._cfg.hide_details = self._hide_details.isChecked()

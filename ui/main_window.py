@@ -87,6 +87,8 @@ class MainWindow(QMainWindow):
         self._global_hotkeys.load_triggered.connect(self._on_load_save)
         self._global_hotkeys.replace_triggered.connect(self._on_replace_save)
         self._global_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
+        self._global_hotkeys.next_slot_triggered.connect(self._select_next_slot)
+        self._global_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
 
         self._load_data()
         self.apply_stylesheet()
@@ -525,6 +527,16 @@ class MainWindow(QMainWindow):
             self._on_slot_selected(target)
         else:
             self._clear_detail()
+
+    def _select_next_slot(self) -> None:
+        row = self.slot_list.currentRow()
+        if row < self.slot_list.count() - 1:
+            self.slot_list.setCurrentRow(row + 1)
+
+    def _select_prev_slot(self) -> None:
+        row = self.slot_list.currentRow()
+        if row > 0:
+            self.slot_list.setCurrentRow(row - 1)
 
     # Event handlers
 
@@ -1048,16 +1060,23 @@ class MainWindow(QMainWindow):
         self.replace_btn.setText(_btn_text("Replace Save", cfg.hotkey_replace))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
-        started = self._global_hotkeys.start(cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle)
+        started = self._global_hotkeys.start(
+            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle,
+            cfg.hotkey_next_slot, cfg.hotkey_prev_slot,
+            enabled=cfg.global_hotkeys_enabled,
+        )
         if not started:
-            # pynput unavailable (e.g. macOS without Accessibility permission) — fall back to
-            # in-app QShortcuts. When pynput IS running it fires on both focused and unfocused
-            # presses, so QShortcuts must not be added or they double-trigger every keypress.
+            # pynput unavailable (e.g. macOS without Accessibility permission) or global hotkeys
+            # disabled — fall back to in-app QShortcuts. When pynput IS running it fires on both
+            # focused and unfocused presses, so QShortcuts must not be added or they double-trigger.
             _bind(cfg.hotkey_import, self._on_import_save)
             _bind(cfg.hotkey_load, self._on_load_save)
             _bind(cfg.hotkey_replace, self._on_replace_save)
             _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
-            if any([cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]):
+            _bind(cfg.hotkey_next_slot, self._select_next_slot)
+            _bind(cfg.hotkey_prev_slot, self._select_prev_slot)
+            global_keys = [cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]
+            if cfg.global_hotkeys_enabled and any(global_keys):
                 self.status_bar.showMessage(
                     "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
                 )

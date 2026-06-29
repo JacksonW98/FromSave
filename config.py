@@ -20,6 +20,9 @@ class Config:
     hotkey_load: str = "F9"
     hotkey_replace: str = ""
     hotkey_ro_toggle: str = "F6"
+    hotkey_next_slot: str = ""
+    hotkey_prev_slot: str = ""
+    global_hotkeys_enabled: bool = True
     soft_delete: bool = False
     compact_list: bool = False
     hide_details: bool = False
@@ -47,6 +50,9 @@ def load_config() -> Config:
             hotkey_load=data.get("hotkey_load", "F9"),
             hotkey_replace=data.get("hotkey_replace", ""),
             hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
+            hotkey_next_slot=data.get("hotkey_next_slot", ""),
+            hotkey_prev_slot=data.get("hotkey_prev_slot", ""),
+            global_hotkeys_enabled=data.get("global_hotkeys_enabled", True),
             soft_delete=data.get("soft_delete", False),
             compact_list=data.get("compact_list", False),
             hide_details=data.get("hide_details", False),
