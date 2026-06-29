@@ -22,7 +22,6 @@ from ui.settings_dialog import SettingsDialog
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
-    from PySide6.QtMultimediaWidgets import QVideoWidget
     _HAS_MULTIMEDIA = True
 except ImportError:
     _HAS_MULTIMEDIA = False
@@ -1335,6 +1334,7 @@ class _InlineVideoPlayer(QWidget):
         self._seeking = False
         self._thumb_player = None
         self._thumb_sink = None
+        self._main_sink = None
 
         self.setFocusPolicy(Qt.ClickFocus)
         outer = QVBoxLayout(self)
@@ -1345,8 +1345,7 @@ class _InlineVideoPlayer(QWidget):
         self._stack.setFixedHeight(320)
 
         if _HAS_MULTIMEDIA:
-            self._video_widget = QVideoWidget()
-            self._video_widget.setStyleSheet("background: #000;")
+            self._video_widget = _VideoFrame()
             self._video_widget.installEventFilter(self)
         else:
             self._video_widget = QWidget()
@@ -1459,7 +1458,9 @@ class _InlineVideoPlayer(QWidget):
         self._audio = QAudioOutput(self)
         self._audio.setVolume(self._vol.value() / 100.0)
         self._player.setAudioOutput(self._audio)
-        self._player.setVideoOutput(self._video_widget)
+        self._main_sink = QVideoSink(self)
+        self._main_sink.videoFrameChanged.connect(self._video_widget.update_frame)
+        self._player.setVideoSink(self._main_sink)
         self._player.setSource(parsed)
         self._player.positionChanged.connect(self._on_position)
         self._player.durationChanged.connect(self._on_duration)
@@ -1494,6 +1495,9 @@ class _InlineVideoPlayer(QWidget):
             self._player.stop()
             self._player.deleteLater()
             self._player = None
+        if self._main_sink is not None:
+            self._main_sink.deleteLater()
+            self._main_sink = None
         if self._audio is not None:
             self._audio.deleteLater()
             self._audio = None
@@ -1515,29 +1519,30 @@ class _InlineVideoPlayer(QWidget):
         self._thumb_sink = QVideoSink(self)
         self._thumb_player.setVideoSink(self._thumb_sink)
         self._thumb_player.setSource(url)
-
-        def on_duration(ms: int) -> None:
-            if self._thumb_player is None or ms <= 0:
-                return
-            seek_ms = min(500, max(0, ms - 100))
-            self._thumb_player.setPosition(seek_ms)
-            self._thumb_player.play()
+        state = {"seeked": False}
 
         def on_frame(frame) -> None:
             if self._thumb_player is None or not frame.isValid():
                 return
+            if not state["seeked"]:
+                dur = self._thumb_player.duration()
+                if dur > 1000:
+                    self._thumb_player.setPosition(min(2000, dur // 4))
+                state["seeked"] = True
+                return
             img = frame.toImage()
+            if img.isNull():
+                return
             tp, ts = self._thumb_player, self._thumb_sink
             self._thumb_player = None
             self._thumb_sink = None
             tp.stop()
             tp.deleteLater()
             ts.deleteLater()
-            if not img.isNull():
-                self._play_overlay.set_thumbnail(img)
+            self._play_overlay.set_thumbnail(img)
 
-        self._thumb_player.durationChanged.connect(on_duration)
         self._thumb_sink.videoFrameChanged.connect(on_frame)
+        self._thumb_player.play()
 
     def _open_in_browser(self) -> None:
         if self._player is not None:
@@ -1671,6 +1676,33 @@ class _PlayOverlay(QWidget):
             QPointF(cx - tri_w / 2 + ox, cy + tri_h / 2),
             QPointF(cx + tri_w / 2 + ox, cy),
         ]))
+
+
+class _VideoFrame(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: #000;")
+        self._frame: QImage | None = None
+
+    def update_frame(self, frame) -> None:
+        if frame.isValid():
+            img = frame.toImage()
+            if not img.isNull():
+                self._frame = img
+                self.update()
+
+    def paintEvent(self, _) -> None:
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(0, 0, 0))
+        if self._frame and not self._frame.isNull():
+            scaled = self._frame.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            p.drawImage(x, y, scaled)
 
 
 def _fmt_ms(ms: int) -> str:
