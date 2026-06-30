@@ -1,14 +1,18 @@
 import ctypes
 import ctypes.util
+import logging
 import sys
 
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
 
 try:
     from pynput import keyboard as _kb
     _AVAILABLE = True
 except ImportError:
     _AVAILABLE = False
+    logger.info("pynput is not installed; global hotkeys unavailable")
 #TODO test on windows
 
 
@@ -20,6 +24,7 @@ def _is_trusted() -> bool:
         lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("ApplicationServices"))
         return bool(lib.AXIsProcessTrusted())
     except Exception:
+        logger.exception("Failed to check macOS Accessibility trust status")
         return False
 
 def _qt_to_pynput(qt_seq: str) -> str | None:
@@ -76,7 +81,14 @@ class GlobalHotkeyListener(QObject):
     ) -> bool:
         """Start the listener. Returns True if started, False if unavailable, not trusted, or disabled."""
         self.stop()
-        if not enabled or not _AVAILABLE or not _is_trusted():
+        if not enabled:
+            logger.info("Global hotkeys disabled in settings")
+            return False
+        if not _AVAILABLE:
+            logger.warning("Global hotkeys unavailable because pynput could not be imported")
+            return False
+        if not _is_trusted():
+            logger.warning("Global hotkeys unavailable because the process is not trusted")
             return False
 
         bindings: dict[str, object] = {}
@@ -94,14 +106,17 @@ class GlobalHotkeyListener(QObject):
             bindings[pk] = self.prev_slot_triggered.emit
 
         if not bindings:
+            logger.info("No global hotkeys configured")
             return False
 
         try:
             self._listener = _kb.GlobalHotKeys(bindings)
             self._listener.daemon = True
             self._listener.start()
+            logger.info("Global hotkeys started: %s", sorted(bindings))
             return True
         except Exception:
+            logger.exception("Failed to start global hotkeys: %s", sorted(bindings))
             self._listener = None
             return False
 
@@ -110,5 +125,6 @@ class GlobalHotkeyListener(QObject):
             try:
                 self._listener.stop()
             except Exception:
+                logger.exception("Failed to stop global hotkey listener cleanly")
                 pass
             self._listener = None

@@ -1,8 +1,10 @@
 import json
+import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
 _CONFIG_FILE = Path(__file__).parent / "config.json"
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,10 +35,12 @@ class Config:
 
 def load_config() -> Config:
     if not _CONFIG_FILE.exists():
+        logger.info("Config file not found, using defaults: %s", _CONFIG_FILE)
         return Config()
     try:
         with open(_CONFIG_FILE, encoding="utf-8") as f:
             data = json.load(f)
+        logger.info("Loaded config: %s", _CONFIG_FILE)
         return Config(
             confirm_delete=data.get("confirm_delete", True),
             confirm_replace=data.get("confirm_replace", True),
@@ -62,9 +66,11 @@ def load_config() -> Config:
             window_height=data.get("window_height", 0),
         )
     except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)
         return Config()
 
 
 def save_config(cfg: Config) -> None:
+    logger.debug("Saving config: %s", _CONFIG_FILE)
     with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(asdict(cfg), f, indent=4)

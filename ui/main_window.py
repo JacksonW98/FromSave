@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ import video as video_module
 from hotkeys import GlobalHotkeyListener
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
+
+logger = logging.getLogger(__name__)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
@@ -779,6 +782,7 @@ class MainWindow(QMainWindow):
                 f"Protected: restored '{self._guard_slot.name}'.", 4000
             )
         except OSError as e:
+            logger.exception("Lock restore failed: slot=%r path=%s", self._guard_slot.name, path)
             self.status_bar.showMessage(f"Lock: restore failed — {e}")
         # Re-add after our write is done so the next game save is caught
         self._guard_watcher.addPath(path)
@@ -805,6 +809,8 @@ class MainWindow(QMainWindow):
         try:
             storage.import_save(self.game_combo.currentText(), profile, name, cfg)
         except Exception as e:
+            logger.exception("Import save failed: game=%r profile=%r slot=%r",
+                             self.game_combo.currentText(), profile, name)
             self.status_bar.showMessage(f"Import failed: {e}")
             return
         self._reload_slots(name)
@@ -856,6 +862,8 @@ class MainWindow(QMainWindow):
         try:
             storage.replace_save(slot, cfg)
         except Exception as e:
+            logger.exception("Replace save failed: game=%r profile=%r slot=%r",
+                             slot.game, slot.profile, slot.name)
             self.status_bar.showMessage(f"Replace failed: {e}")
             return
         self._reload_slots(slot_name)
@@ -876,6 +884,8 @@ class MainWindow(QMainWindow):
         try:
             storage.load_save(slot, cfg)
         except Exception as e:
+            logger.exception("Load save failed: game=%r profile=%r slot=%r",
+                             slot.game, slot.profile, slot.name)
             self.status_bar.showMessage(f"Load failed: {e}")
             return
 
@@ -904,6 +914,8 @@ class MainWindow(QMainWindow):
         try:
             storage.delete_slot(slot, soft=soft)
         except Exception as e:
+            logger.exception("Delete slot failed: game=%r profile=%r slot=%r soft=%s",
+                             slot.game, slot.profile, slot.name, soft)
             self.status_bar.showMessage(f"Delete failed: {e}")
             return
         self._slots.pop(row)
@@ -954,6 +966,8 @@ class MainWindow(QMainWindow):
         try:
             storage.rename_slot(slot, name)
         except Exception as e:
+            logger.exception("Rename slot failed: game=%r profile=%r %r -> %r",
+                             slot.game, slot.profile, slot.name, name)
             self.status_bar.showMessage(f"Rename failed: {e}")
             return
         item = self.slot_list.item(row)
@@ -1002,6 +1016,8 @@ class MainWindow(QMainWindow):
         try:
             storage.duplicate_slot(slot, new_name)
         except Exception as e:
+            logger.exception("Duplicate slot failed: game=%r profile=%r slot=%r",
+                             slot.game, slot.profile, slot.name)
             self.status_bar.showMessage(f"Duplicate failed: {e}")
             return
         self._reload_slots(new_name)
@@ -1038,6 +1054,8 @@ class MainWindow(QMainWindow):
         try:
             storage.copy_slot_to_profile(slot, target_profile, new_name)
         except Exception as e:
+            logger.exception("Copy slot to profile failed: game=%r %r/%r -> %r/%r",
+                             slot.game, slot.profile, slot.name, target_profile, new_name)
             self.status_bar.showMessage(f"{verb} failed: {e}")
             return
 
@@ -1049,6 +1067,8 @@ class MainWindow(QMainWindow):
             try:
                 storage.delete_slot(slot, soft=self._config.soft_delete)
             except Exception as e:
+                logger.exception("Move: delete after copy failed: game=%r %r/%r -> %r",
+                                 slot.game, current_profile, slot_name, target_profile)
                 self.status_bar.showMessage(f"Copy succeeded but delete failed: {e}")
                 return
             self._reload_slots()
@@ -1087,6 +1107,7 @@ class MainWindow(QMainWindow):
             storage.take_run_backup(cfg)
             self.status_bar.showMessage("Run backup saved.", 2000)
         except Exception as e:
+            logger.exception("Run backup failed: game=%r", cfg.name)
             self.status_bar.showMessage(f"Run backup failed: {e}", 3000)
 
     def _on_open_settings(self) -> None:
@@ -1102,6 +1123,7 @@ class MainWindow(QMainWindow):
         config.save_config(self._config)
         self._games = dlg.result_games
         storage.save_games(self._games)
+        logger.info("Settings saved by user")
 
         self.game_combo.blockSignals(True)
         self.game_combo.clear()
@@ -1226,6 +1248,10 @@ class MainWindow(QMainWindow):
         return True
 
     def closeEvent(self, event) -> None:
+        logger.info("Application closing: game=%r profile=%r slot=%r",
+                    self.game_combo.currentText(),
+                    self.profile_combo.currentText(),
+                    self._current_slot.name if self._current_slot else "")
         self._run_backup_timer.stop()
         self._global_hotkeys.stop()
         self._flush_notes()
@@ -1250,7 +1276,7 @@ class MainWindow(QMainWindow):
             with open(stylesheet_path, 'r') as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
-            print(f"Style sheet file not found at: {stylesheet_path}")
+            logger.warning("Stylesheet not found: %s", stylesheet_path)
 
 
 def _game_path_display(cfg: Optional[storage.GameConfig]) -> str:
