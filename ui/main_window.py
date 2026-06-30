@@ -421,7 +421,8 @@ class MainWindow(QMainWindow):
 
         # Update game info panel
         game_cfg = self._get_game_cfg()
-        self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
+        self.info_save_path.setVisible(not self._config.hide_paths)
+        self.info_save_path.set_value(_game_path_display(game_cfg))
 
         # Load slots, restoring last selected slot
         self._reload_slots(self._config.last_slot)
@@ -437,7 +438,8 @@ class MainWindow(QMainWindow):
         self.profile_combo.blockSignals(False)
 
         game_cfg = next((g for g in self._games if g.name == game_name), None)
-        self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
+        self.info_save_path.setVisible(not self._config.hide_paths)
+        self.info_save_path.set_value(_game_path_display(game_cfg))
 
         self._reload_slots()
 
@@ -1218,7 +1220,8 @@ class MainWindow(QMainWindow):
                 self.profile_combo.setCurrentIndex(profile_idx)
 
             game_cfg = self._get_game_cfg()
-            self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
+            self.info_save_path.setVisible(not self._config.hide_paths)
+            self.info_save_path.set_value(_game_path_display(game_cfg))
 
             self._reload_slots(prev_slot)
         else:
