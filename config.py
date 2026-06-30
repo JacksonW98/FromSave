@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 class Config:
     confirm_delete: bool = True
     confirm_replace: bool = True
+    confirm_lock_slot: bool = False
     auto_name_imports: bool = False
     show_save_path: bool = True
     slot_sort: str = "modified"  # "name" | "created" | "modified" | "custom"
@@ -44,6 +45,7 @@ def load_config() -> Config:
         return Config(
             confirm_delete=data.get("confirm_delete", True),
             confirm_replace=data.get("confirm_replace", True),
+            confirm_lock_slot=data.get("confirm_lock_slot", False),
             auto_name_imports=data.get("auto_name_imports", False),
             show_save_path=data.get("show_save_path", True),
             slot_sort=data.get("slot_sort", "modified"),

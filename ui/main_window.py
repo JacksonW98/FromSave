@@ -684,8 +684,17 @@ class MainWindow(QMainWindow):
             self.ro_btn.blockSignals(False)
             self.status_bar.showMessage("Run mode is on — disable it before using lock slot.")
             return
+        warning_shown = False
         if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
             if not self._show_protect_warning():
+                self.ro_btn.blockSignals(True)
+                self.ro_btn.setChecked(False)
+                self.ro_btn.blockSignals(False)
+                return
+            warning_shown = True
+        if checked and not warning_shown and self._config.confirm_lock_slot:
+            if not self._confirm("lock", "Lock slot",
+                                 "Lock this slot?\n\nThe game will not be able to save progress while it is locked."):
                 self.ro_btn.blockSignals(True)
                 self.ro_btn.setChecked(False)
                 self.ro_btn.blockSignals(False)

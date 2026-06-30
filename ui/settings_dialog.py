@@ -22,6 +22,7 @@ class SettingsDialog(QDialog):
         self._cfg = config.Config(
             confirm_delete=cfg.confirm_delete,
             confirm_replace=cfg.confirm_replace,
+            confirm_lock_slot=cfg.confirm_lock_slot,
             auto_name_imports=cfg.auto_name_imports,
             show_save_path=cfg.show_save_path,
             slot_sort=cfg.slot_sort,
@@ -43,10 +44,11 @@ class SettingsDialog(QDialog):
             window_height=cfg.window_height,
         )
         self._initial_cfg = (
-            cfg.confirm_delete, cfg.confirm_replace, cfg.auto_name_imports,
-            cfg.show_save_path, cfg.soft_delete, cfg.compact_list, cfg.hide_details,
-            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle,
-            cfg.hotkey_next_slot, cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
+            cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
+            cfg.auto_name_imports, cfg.show_save_path, cfg.soft_delete,
+            cfg.compact_list, cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
+            cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
+            cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -86,6 +88,8 @@ class SettingsDialog(QDialog):
         self._confirm_replace.setChecked(self._cfg.confirm_replace)
         self._confirm_delete = QCheckBox("Confirm before deleting a save")
         self._confirm_delete.setChecked(self._cfg.confirm_delete)
+        self._confirm_lock_slot = QCheckBox("Confirm before locking a slot")
+        self._confirm_lock_slot.setChecked(self._cfg.confirm_lock_slot)
         self._show_save_path = QCheckBox("Show save path in info panel")
         self._show_save_path.setChecked(self._cfg.show_save_path)
         self._soft_delete = QCheckBox("Send deleted saves to the system trash instead of permanently deleting")
@@ -96,6 +100,7 @@ class SettingsDialog(QDialog):
         self._hide_details.setChecked(self._cfg.hide_details)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
+        behaviour_layout.addWidget(self._confirm_lock_slot)
         behaviour_layout.addWidget(self._show_save_path)
         behaviour_layout.addWidget(self._soft_delete)
         behaviour_layout.addWidget(self._compact_list)
@@ -289,6 +294,7 @@ class SettingsDialog(QDialog):
         current_cfg = (
             self._confirm_delete.isChecked(),
             self._confirm_replace.isChecked(),
+            self._confirm_lock_slot.isChecked(),
             self._auto_name.isChecked(),
             self._show_save_path.isChecked(),
             self._soft_delete.isChecked(),
@@ -327,6 +333,7 @@ class SettingsDialog(QDialog):
     def _on_save(self) -> None:
         self._cfg.confirm_replace = self._confirm_replace.isChecked()
         self._cfg.confirm_delete = self._confirm_delete.isChecked()
+        self._cfg.confirm_lock_slot = self._confirm_lock_slot.isChecked()
         self._cfg.auto_name_imports = self._auto_name.isChecked()
         self._cfg.show_save_path = self._show_save_path.isChecked()
         self._cfg.hotkey_import = self._hk_import.keySequence().toString()
