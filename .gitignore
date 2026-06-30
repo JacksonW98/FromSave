@@ -1,2 +1,6 @@
 saves/
 **/__pycache__
+config.json
+logs/
+.vscode/
+.DS_Store
