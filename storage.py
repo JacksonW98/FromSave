@@ -269,6 +269,12 @@ def load_save(slot: SaveSlot, game_cfg: GameConfig, *, make_backup: bool = True)
     """Copy a slot's save back to the game's save path."""
     logger.info("Loading slot to live save: game=%r profile=%r slot=%r mode=%s make_backup=%s",
                 slot.game, slot.profile, slot.name, game_cfg.save_mode, make_backup)
+
+    if game_cfg.save_mode in ("file", "folder") and not game_cfg.save_path:
+        raise ValueError(f"Save path is not configured for game {game_cfg.name!r}")
+    if game_cfg.save_mode == "files" and not game_cfg.save_paths:
+        raise ValueError(f"No save paths configured for game {game_cfg.name!r}")
+
     if make_backup:
         try:
             _backup_live_save(game_cfg)
@@ -306,6 +312,9 @@ def _backup_live_save(game_cfg: GameConfig) -> None:
     mode = game_cfg.save_mode
 
     if mode == "file":
+        if not game_cfg.save_path:
+            logger.warning("Skipping load backup; save path not configured for game=%r", game_cfg.name)
+            return
         src = Path(game_cfg.save_path)
         if not src.exists():
             logger.warning("Skipping load backup; live save file missing: %s", src)
@@ -323,6 +332,9 @@ def _backup_live_save(game_cfg: GameConfig) -> None:
             logger.info("Backing up live save file: %s -> %s", src, backup_dir / src.name)
             shutil.copy2(src, backup_dir / src.name)
     elif mode == "folder":
+        if not game_cfg.save_path:
+            logger.warning("Skipping load backup; save path not configured for game=%r", game_cfg.name)
+            return
         src = Path(game_cfg.save_path)
         if not src.exists():
             logger.warning("Skipping load backup; live save folder missing: %s", src)
@@ -356,6 +368,9 @@ def take_run_backup(game_cfg: GameConfig) -> None:
     mode = game_cfg.save_mode
 
     if mode == "file":
+        if not game_cfg.save_path:
+            logger.warning("Skipping run backup; save path not configured for game=%r", game_cfg.name)
+            return
         src = Path(game_cfg.save_path)
         if not src.exists():
             logger.warning("Skipping run backup; live save file missing: %s", src)
@@ -373,6 +388,9 @@ def take_run_backup(game_cfg: GameConfig) -> None:
             logger.info("Taking run backup file: %s -> %s", src, backup_dir / src.name)
             shutil.copy2(src, backup_dir / src.name)
     elif mode == "folder":
+        if not game_cfg.save_path:
+            logger.warning("Skipping run backup; save path not configured for game=%r", game_cfg.name)
+            return
         src = Path(game_cfg.save_path)
         if not src.exists():
             logger.warning("Skipping run backup; live save folder missing: %s", src)
