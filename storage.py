@@ -357,6 +357,52 @@ def _prune_backups(game_name: str, keep: int) -> None:
         shutil.rmtree(old)
 
 
+_PRACTICE_START_DIR_NAME = "_practice_start"
+
+
+def snapshot_practice_start(game_cfg: GameConfig) -> None:
+    """Snapshot the live save when practice mode is activated. Overwrites any previous snapshot
+    for this game so there is always exactly one — the save from before the current practice session."""
+    dest = SAVES_DIR / _PRACTICE_START_DIR_NAME / game_cfg.name
+    mode = game_cfg.save_mode
+
+    if mode == "file":
+        if not game_cfg.save_path:
+            logger.warning("Skipping practice-start snapshot; save path not configured for game=%r", game_cfg.name)
+            return
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            logger.warning("Skipping practice-start snapshot; live save file missing: %s", src)
+            return
+        dest.mkdir(parents=True, exist_ok=True)
+        logger.info("Practice-start snapshot: %s -> %s", src, dest / src.name)
+        shutil.copy2(src, dest / src.name)
+    elif mode == "files":
+        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
+        if not existing:
+            logger.warning("Skipping practice-start snapshot; no save files exist for game=%r", game_cfg.name)
+            return
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in existing:
+            logger.info("Practice-start snapshot: %s -> %s", src, dest / src.name)
+            shutil.copy2(src, dest / src.name)
+    elif mode == "folder":
+        if not game_cfg.save_path:
+            logger.warning("Skipping practice-start snapshot; save path not configured for game=%r", game_cfg.name)
+            return
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            logger.warning("Skipping practice-start snapshot; live save folder missing: %s", src)
+            return
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        logger.info("Practice-start snapshot: %s -> %s", src, dest / "save_data")
+        shutil.copytree(src, dest / "save_data")
+
+
 _RUN_BACKUPS_DIR_NAME = "_run_backups"
 _MAX_RUN_BACKUPS = 3
 

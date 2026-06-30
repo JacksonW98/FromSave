@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
         self.info_created = _InfoRow("Created", "—")
         self.info_modified = _InfoRow("Modified", "—")
         self.info_file_size = _InfoRow("File size", "—")
-        self.info_ro_status = _InfoRow("Lock", "—")
+        self.info_ro_status = _InfoRow("Practice", "—")
 
         for row in (self.info_save_path, self.info_created, self.info_modified, self.info_file_size, self.info_ro_status):
             info_layout.addWidget(row)
@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.delete_btn)
         bar.addStretch()
 
-        self.ro_btn = QPushButton(_btn_text("Lock slot", self._config.hotkey_ro_toggle))
+        self.ro_btn = QPushButton(_btn_text("Practice Mode", self._config.hotkey_ro_toggle))
         self.ro_btn.setObjectName("ghostBtn")
         self.ro_btn.setCheckable(True)
         self.ro_btn.setEnabled(False)
@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
         self.run_mode_btn.setObjectName("ghostBtn")
         self.run_mode_btn.setCheckable(True)
         self.run_mode_btn.setToolTip(
-            "Disables Load Save and Lock Slot to protect the game save,\n"
+            "Disables Load Save and Practice Mode to protect the game save,\n"
             "and takes a rolling backup every 2 minutes (keeps last 3)."
         )
         self.run_mode_btn.toggled.connect(self._on_run_mode_toggled)
@@ -583,7 +583,7 @@ class MainWindow(QMainWindow):
         if save_files:
             is_guarded = (self._guard_slot is not None
                           and self._guard_slot.path == slot.path)
-            self.info_ro_status.set_value("Locked" if is_guarded else "Unlocked")
+            self.info_ro_status.set_value("Active" if is_guarded else "Inactive")
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(is_guarded)
             self.ro_btn.setText(self._ro_btn_text(is_guarded))
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(False)
             self.ro_btn.blockSignals(False)
-            self.status_bar.showMessage("Run mode is on — disable it before using lock slot.")
+            self.status_bar.showMessage("Run mode is on — disable it before using Practice Mode.")
             return
         warning_shown = False
         if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
@@ -697,8 +697,8 @@ class MainWindow(QMainWindow):
                 return
             warning_shown = True
         if checked and not warning_shown and self._config.confirm_lock_slot:
-            if not self._confirm("lock", "Lock slot",
-                                 "Lock this slot?\n\nThis will immediately overwrite the game's current save with this slot. The game will not be able to save progress while it is locked.",
+            if not self._confirm("lock", "Practice Mode",
+                                 "Enable practice mode?\n\nThis will immediately overwrite the game's current save with this slot and keep restoring it any time the game tries to save. The game will not be able to save progress while practice mode is on.",
                                  disable_key="confirm_lock_slot"):
                 self.ro_btn.blockSignals(True)
                 self.ro_btn.setChecked(False)
@@ -717,10 +717,11 @@ class MainWindow(QMainWindow):
             self._guard_slot = self._current_slot
             self._guard_cfg = game_cfg
             try:
-                storage.load_save(self._guard_slot, self._guard_cfg, make_backup=True)
+                storage.snapshot_practice_start(self._guard_cfg)
+                storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
             except OSError as e:
-                logger.exception("Lock slot: failed to apply slot on lock: slot=%r", self._current_slot.name)
-                self.status_bar.showMessage(f"Lock slot: failed to apply — {e}")
+                logger.exception("Practice Mode: failed to apply slot on activate: slot=%r", self._current_slot.name)
+                self.status_bar.showMessage(f"Practice Mode: failed to apply — {e}")
                 self._guard_slot = None
                 self._guard_cfg = None
                 self.ro_btn.blockSignals(True)
@@ -740,26 +741,26 @@ class MainWindow(QMainWindow):
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
         self.ro_btn.setText(self._ro_btn_text(checked))
-        self.info_ro_status.set_value("Locked" if checked else "Unlocked")
+        self.info_ro_status.set_value("Active" if checked else "Inactive")
         self.status_bar.showMessage(
-            f"'{label}' {'is now locked.' if checked else 'is now unlocked.'}"
+            f"'{label}' — {'practice mode is on.' if checked else 'practice mode is off.'}"
         )
 
     def _show_protect_warning(self) -> bool:
         """Show the protect-save warning. Returns True if the user confirmed, False if cancelled."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Lock slot — heads up")
+        dlg.setWindowTitle("Practice Mode — heads up")
         dlg.setMinimumWidth(420)
         layout = QVBoxLayout(dlg)
         layout.setSpacing(14)
         layout.setContentsMargins(20, 20, 20, 16)
 
         msg = QLabel(
-            "<b>Locking a slot immediately overwrites the game's current save with the selected "
-            "slot, then keeps overwriting it any time the game tries to change it.</b><br><br>"
-            "Your current save is backed up before the overwrite. The game will not be able to "
-            "save progress while the slot is locked — any new save data the game tries to write "
-            "will be lost. Unlock the slot before saving in-game.<br><br>"
+            "<b>Enabling practice mode immediately overwrites the game's current save with the "
+            "selected slot, then keeps restoring it any time the game tries to change it.</b><br><br>"
+            "Your current save is kept as a backup before the overwrite. The game will not be able to "
+            "save progress while practice mode is on — any new save data the game tries to write "
+            "will be lost. Disable practice mode before saving in-game.<br><br>"
             "This feature may not work correctly on all games, behaviour depends on how the "
             "game handles save files and has not been tested with every title."
         )
@@ -894,7 +895,7 @@ class MainWindow(QMainWindow):
             return
         slot = self._slots[row]
         if self._guard_slot is not None and self._guard_slot.path == slot.path:
-            self.status_bar.showMessage(f"'{slot.name}' is locked — unlock the slot before replacing.")
+            self.status_bar.showMessage(f"'{slot.name}' has practice mode active — disable it before replacing.")
             return
         if self._config.confirm_replace:
             if not self._confirm("replace", "Replace save",
@@ -1240,8 +1241,8 @@ class MainWindow(QMainWindow):
     def _ro_btn_text(self, is_on: bool) -> str:
         key = _hotkey_label(self._config.hotkey_ro_toggle)
         if is_on:
-            return _btn_text("Slot locked", key)
-        return _btn_text("Lock slot", key)
+            return _btn_text("Practicing", key)
+        return _btn_text("Practice Mode", key)
 
     def _apply_hotkeys(self) -> None:
         for sc in getattr(self, "_shortcuts", []):
