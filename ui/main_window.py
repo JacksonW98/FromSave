@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
 
         # Update game info panel
         game_cfg = self._get_game_cfg()
-        self.info_save_path.set_value(_game_path_display(game_cfg))
+        self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
 
         # Load slots, restoring last selected slot
         self._reload_slots(self._config.last_slot)
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         self.profile_combo.blockSignals(False)
 
         game_cfg = next((g for g in self._games if g.name == game_name), None)
-        self.info_save_path.set_value(_game_path_display(game_cfg))
+        self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
 
         self._reload_slots()
 
@@ -1148,6 +1148,38 @@ class MainWindow(QMainWindow):
             logger.exception("Run backup failed: game=%r", cfg.name)
             self.status_bar.showMessage(f"Run backup failed: {e}", 3000)
 
+    def show_first_run_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("No settings found")
+        dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(14)
+        layout.setContentsMargins(20, 20, 20, 16)
+
+        msg = QLabel(
+            "No settings found. Would you like to configure the application?<br><br>"
+            "You'll need to add your games and their save file paths before you can get started."
+        )
+        msg.setWordWrap(True)
+        msg.setTextFormat(Qt.RichText)
+        layout.addWidget(msg)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+        later_btn = QPushButton("Maybe later")
+        later_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(later_btn)
+        open_btn = QPushButton("Open Settings")
+        open_btn.setObjectName("primaryBtn")
+        open_btn.setDefault(True)
+        open_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(open_btn)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.Accepted:
+            self._on_open_settings()
+
     def _on_open_settings(self) -> None:
         prev_game = self.game_combo.currentText()
         prev_profile = self.profile_combo.currentText()
@@ -1186,7 +1218,7 @@ class MainWindow(QMainWindow):
                 self.profile_combo.setCurrentIndex(profile_idx)
 
             game_cfg = self._get_game_cfg()
-            self.info_save_path.set_value(_game_path_display(game_cfg))
+            self.info_save_path.set_value("Hidden" if self._config.hide_paths else _game_path_display(game_cfg))
 
             self._reload_slots(prev_slot)
         else:
@@ -1269,7 +1301,8 @@ class MainWindow(QMainWindow):
                 return False
             missing = [p for p in cfg.save_paths if not Path(p).exists()]
             if missing:
-                self.status_bar.showMessage(f"Save file not found: {missing[0]}")
+                path_str = "(path hidden)" if self._config.hide_paths else missing[0]
+                self.status_bar.showMessage(f"Save file not found: {path_str}")
                 return False
             return True
         if not cfg.save_path:
@@ -1277,7 +1310,8 @@ class MainWindow(QMainWindow):
             return False
         src = Path(cfg.save_path)
         if not src.exists():
-            self.status_bar.showMessage(f"Save path not found: {src}")
+            path_str = "(path hidden)" if self._config.hide_paths else str(src)
+            self.status_bar.showMessage(f"Save path not found: {path_str}")
             return False
         return True
 

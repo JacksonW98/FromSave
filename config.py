@@ -13,6 +13,7 @@ class Config:
     confirm_replace: bool = True
     confirm_lock_slot: bool = False
     auto_name_imports: bool = False
+    hide_paths: bool = False
     slot_sort: str = "modified"  # "name" | "created" | "modified" | "custom"
     slot_sort_desc: bool = True  # True = descending (newest first / Z→A)
     last_game: str = ""
@@ -46,6 +47,7 @@ def load_config() -> Config:
             confirm_replace=data.get("confirm_replace", True),
             confirm_lock_slot=data.get("confirm_lock_slot", False),
             auto_name_imports=data.get("auto_name_imports", False),
+            hide_paths=data.get("hide_paths", False),
             slot_sort=data.get("slot_sort", "modified"),
             slot_sort_desc=data.get("slot_sort_desc", True),
             last_game=data.get("last_game", ""),

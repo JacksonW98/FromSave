@@ -24,6 +24,7 @@ class SettingsDialog(QDialog):
             confirm_replace=cfg.confirm_replace,
             confirm_lock_slot=cfg.confirm_lock_slot,
             auto_name_imports=cfg.auto_name_imports,
+            hide_paths=cfg.hide_paths,
             slot_sort=cfg.slot_sort,
             slot_sort_desc=cfg.slot_sort_desc,
             last_game=cfg.last_game,
@@ -43,7 +44,7 @@ class SettingsDialog(QDialog):
         )
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
-            cfg.auto_name_imports, cfg.soft_delete,
+            cfg.auto_name_imports, cfg.hide_paths, cfg.soft_delete,
             cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
             cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
             cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
@@ -58,6 +59,7 @@ class SettingsDialog(QDialog):
         self._build_ui()
         for game in games:
             self._add_game_row(game.name, game.save_mode, game.save_path, game.save_paths)
+        self._apply_path_hide()
         ui_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
         qss_path = os.path.join(ui_dir, "settings_dialog.qss")
         with open(qss_path, "r") as f:
@@ -92,11 +94,15 @@ class SettingsDialog(QDialog):
         self._soft_delete.setChecked(self._cfg.soft_delete)
         self._hide_details = QCheckBox("Hide details panel  (slot name, notes, and game info)")
         self._hide_details.setChecked(self._cfg.hide_details)
+        self._hide_paths = QCheckBox("Hide file paths")
+        self._hide_paths.setChecked(self._cfg.hide_paths)
+        self._hide_paths.toggled.connect(self._apply_path_hide)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
         behaviour_layout.addWidget(self._confirm_lock_slot)
         behaviour_layout.addWidget(self._soft_delete)
         behaviour_layout.addWidget(self._hide_details)
+        behaviour_layout.addWidget(self._hide_paths)
 
         layout.addWidget(behaviour_box)
 
@@ -221,6 +227,11 @@ class SettingsDialog(QDialog):
             browse_btn.setFixedWidth(90)
         browse_btn.clicked.connect(self._make_browse(edit, mode))
 
+        reveal_btn = QPushButton("Click to reveal")
+        reveal_btn.setObjectName("revealPathBtn")
+        reveal_btn.setVisible(False)
+        reveal_btn.clicked.connect(lambda checked=False, e=entry: self._reveal_path(e))
+
         del_btn = QPushButton("×")
         del_btn.setObjectName("dangerBtn")
         del_btn.setFixedWidth(40)
@@ -228,14 +239,26 @@ class SettingsDialog(QDialog):
 
         row_layout.addWidget(lbl)
         row_layout.addWidget(edit, 1)
+        row_layout.addWidget(reveal_btn, 1)
         row_layout.addWidget(browse_btn)
         row_layout.addWidget(del_btn)
 
         entry["edit"] = edit
+        entry["reveal_btn"] = reveal_btn
         entry["widget"] = row
 
         self._game_entries.append(entry)
         self._paths_layout.addWidget(row)
+
+    def _apply_path_hide(self) -> None:
+        hide = self._hide_paths.isChecked()
+        for entry in self._game_entries:
+            entry["edit"].setVisible(not hide)
+            entry["reveal_btn"].setVisible(hide)
+
+    def _reveal_path(self, entry: dict) -> None:
+        entry["reveal_btn"].setVisible(False)
+        entry["edit"].setVisible(True)
 
     def _remove_game_row(self, entry: dict) -> None:
         reply = QMessageBox.question(
@@ -288,6 +311,7 @@ class SettingsDialog(QDialog):
             self._confirm_replace.isChecked(),
             self._confirm_lock_slot.isChecked(),
             self._auto_name.isChecked(),
+            self._hide_paths.isChecked(),
             self._soft_delete.isChecked(),
             self._hide_details.isChecked(),
             self._hk_import.keySequence().toString(),
@@ -325,6 +349,7 @@ class SettingsDialog(QDialog):
         self._cfg.confirm_delete = self._confirm_delete.isChecked()
         self._cfg.confirm_lock_slot = self._confirm_lock_slot.isChecked()
         self._cfg.auto_name_imports = self._auto_name.isChecked()
+        self._cfg.hide_paths = self._hide_paths.isChecked()
         self._cfg.hotkey_import = self._hk_import.keySequence().toString()
         self._cfg.hotkey_load = self._hk_load.keySequence().toString()
         self._cfg.hotkey_replace = self._hk_replace.keySequence().toString()
