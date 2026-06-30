@@ -484,7 +484,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._reattach_slot_widgets)
 
     def _reattach_slot_widgets(self) -> None:
-        compact = self._config.compact_list
+        compact = True
         for i in range(self.slot_list.count()):
             item = self.slot_list.item(i)
             slot = item.data(Qt.UserRole)
@@ -523,7 +523,7 @@ class MainWindow(QMainWindow):
         )
         self.sort_dir_btn.setEnabled(not is_custom)
 
-        compact = self._config.compact_list
+        compact = True
         self._slots = slots
         self.slot_list.blockSignals(True)
         self.slot_list.clear()
@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
             return
         item = self.slot_list.item(row)
         ts = _fmt_dt(slot.date_modified or slot.date_created)
-        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, self._config.compact_list))
+        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, True))
         self.detail_name.setText(slot.name)
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()

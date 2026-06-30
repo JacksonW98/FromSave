@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 class Config:
     confirm_delete: bool = True
     confirm_replace: bool = True
-    confirm_lock_slot: bool = False
-    auto_name_imports: bool = False
+    confirm_lock_slot: bool = True
+    auto_name_imports: bool = True
     hide_paths: bool = False
-    slot_sort: str = "modified"  # "name" | "created" | "modified" | "custom"
+    slot_sort: str = "name"  # "name" | "created" | "modified" | "custom"
     slot_sort_desc: bool = True  # True = descending (newest first / Z→A)
     last_game: str = ""
     last_profile: str = ""
@@ -25,10 +25,9 @@ class Config:
     hotkey_ro_toggle: str = "F6"
     hotkey_next_slot: str = ""
     hotkey_prev_slot: str = ""
-    global_hotkeys_enabled: bool = True
+    global_hotkeys_enabled: bool = False
     protect_warning_acknowledged: bool = False
-    soft_delete: bool = False
-    compact_list: bool = True
+    soft_delete: bool = True
     hide_details: bool = False
     window_width: int = 0
     window_height: int = 0
@@ -45,10 +44,10 @@ def load_config() -> Config:
         return Config(
             confirm_delete=data.get("confirm_delete", True),
             confirm_replace=data.get("confirm_replace", True),
-            confirm_lock_slot=data.get("confirm_lock_slot", False),
-            auto_name_imports=data.get("auto_name_imports", False),
+            confirm_lock_slot=data.get("confirm_lock_slot", True),
+            auto_name_imports=data.get("auto_name_imports", True),
             hide_paths=data.get("hide_paths", False),
-            slot_sort=data.get("slot_sort", "modified"),
+            slot_sort=data.get("slot_sort", "name"),
             slot_sort_desc=data.get("slot_sort_desc", True),
             last_game=data.get("last_game", ""),
             last_profile=data.get("last_profile", ""),
@@ -59,10 +58,9 @@ def load_config() -> Config:
             hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
             hotkey_next_slot=data.get("hotkey_next_slot", ""),
             hotkey_prev_slot=data.get("hotkey_prev_slot", ""),
-            global_hotkeys_enabled=data.get("global_hotkeys_enabled", True),
+            global_hotkeys_enabled=data.get("global_hotkeys_enabled", False),
             protect_warning_acknowledged=data.get("protect_warning_acknowledged", False),
-            soft_delete=data.get("soft_delete", False),
-            compact_list=data.get("compact_list", True),
+            soft_delete=data.get("soft_delete", True),
             hide_details=data.get("hide_details", False),
             window_width=data.get("window_width", 0),
             window_height=data.get("window_height", 0),
