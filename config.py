@@ -13,7 +13,6 @@ class Config:
     confirm_replace: bool = True
     confirm_lock_slot: bool = False
     auto_name_imports: bool = False
-    show_save_path: bool = True
     slot_sort: str = "modified"  # "name" | "created" | "modified" | "custom"
     slot_sort_desc: bool = True  # True = descending (newest first / Z→A)
     last_game: str = ""
@@ -28,7 +27,7 @@ class Config:
     global_hotkeys_enabled: bool = True
     protect_warning_acknowledged: bool = False
     soft_delete: bool = False
-    compact_list: bool = False
+    compact_list: bool = True
     hide_details: bool = False
     window_width: int = 0
     window_height: int = 0
@@ -47,7 +46,6 @@ def load_config() -> Config:
             confirm_replace=data.get("confirm_replace", True),
             confirm_lock_slot=data.get("confirm_lock_slot", False),
             auto_name_imports=data.get("auto_name_imports", False),
-            show_save_path=data.get("show_save_path", True),
             slot_sort=data.get("slot_sort", "modified"),
             slot_sort_desc=data.get("slot_sort_desc", True),
             last_game=data.get("last_game", ""),
@@ -62,7 +60,7 @@ def load_config() -> Config:
             global_hotkeys_enabled=data.get("global_hotkeys_enabled", True),
             protect_warning_acknowledged=data.get("protect_warning_acknowledged", False),
             soft_delete=data.get("soft_delete", False),
-            compact_list=data.get("compact_list", False),
+            compact_list=data.get("compact_list", True),
             hide_details=data.get("hide_details", False),
             window_width=data.get("window_width", 0),
             window_height=data.get("window_height", 0),

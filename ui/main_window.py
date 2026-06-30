@@ -100,7 +100,6 @@ class MainWindow(QMainWindow):
 
         self._load_data()
         self.apply_stylesheet()
-        self._apply_path_visibility()
         self._apply_hotkeys()
 
     # UI construction
@@ -1196,7 +1195,6 @@ class MainWindow(QMainWindow):
             self.profile_combo.blockSignals(False)
             self._reload_slots()
 
-        self._apply_path_visibility()
         self._apply_info_panel()
         self._apply_hotkeys()
         self.status_bar.showMessage("Settings saved.")
@@ -1259,9 +1257,6 @@ class MainWindow(QMainWindow):
         h = max(self.height(), hint.height())
         if w != self.width() or h != self.height():
             self.resize(w, h)
-
-    def _apply_path_visibility(self) -> None:
-        self.info_save_path.setVisible(self._config.show_save_path)
 
     def _get_game_cfg(self) -> Optional[storage.GameConfig]:
         game_name = self.game_combo.currentText()

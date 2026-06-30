@@ -24,7 +24,6 @@ class SettingsDialog(QDialog):
             confirm_replace=cfg.confirm_replace,
             confirm_lock_slot=cfg.confirm_lock_slot,
             auto_name_imports=cfg.auto_name_imports,
-            show_save_path=cfg.show_save_path,
             slot_sort=cfg.slot_sort,
             slot_sort_desc=cfg.slot_sort_desc,
             last_game=cfg.last_game,
@@ -38,15 +37,14 @@ class SettingsDialog(QDialog):
             hotkey_prev_slot=cfg.hotkey_prev_slot,
             global_hotkeys_enabled=cfg.global_hotkeys_enabled,
             soft_delete=cfg.soft_delete,
-            compact_list=cfg.compact_list,
             hide_details=cfg.hide_details,
             window_width=cfg.window_width,
             window_height=cfg.window_height,
         )
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
-            cfg.auto_name_imports, cfg.show_save_path, cfg.soft_delete,
-            cfg.compact_list, cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
+            cfg.auto_name_imports, cfg.soft_delete,
+            cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
             cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
             cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
         )
@@ -90,20 +88,14 @@ class SettingsDialog(QDialog):
         self._confirm_delete.setChecked(self._cfg.confirm_delete)
         self._confirm_lock_slot = QCheckBox("Confirm before locking a slot")
         self._confirm_lock_slot.setChecked(self._cfg.confirm_lock_slot)
-        self._show_save_path = QCheckBox("Show save path in info panel")
-        self._show_save_path.setChecked(self._cfg.show_save_path)
         self._soft_delete = QCheckBox("Send deleted saves to the system trash instead of permanently deleting")
         self._soft_delete.setChecked(self._cfg.soft_delete)
-        self._compact_list = QCheckBox("Compact saves list  (hide dates, show more saves)")
-        self._compact_list.setChecked(self._cfg.compact_list)
         self._hide_details = QCheckBox("Hide details panel  (slot name, notes, and game info)")
         self._hide_details.setChecked(self._cfg.hide_details)
         behaviour_layout.addWidget(self._confirm_replace)
         behaviour_layout.addWidget(self._confirm_delete)
         behaviour_layout.addWidget(self._confirm_lock_slot)
-        behaviour_layout.addWidget(self._show_save_path)
         behaviour_layout.addWidget(self._soft_delete)
-        behaviour_layout.addWidget(self._compact_list)
         behaviour_layout.addWidget(self._hide_details)
 
         layout.addWidget(behaviour_box)
@@ -296,9 +288,7 @@ class SettingsDialog(QDialog):
             self._confirm_replace.isChecked(),
             self._confirm_lock_slot.isChecked(),
             self._auto_name.isChecked(),
-            self._show_save_path.isChecked(),
             self._soft_delete.isChecked(),
-            self._compact_list.isChecked(),
             self._hide_details.isChecked(),
             self._hk_import.keySequence().toString(),
             self._hk_load.keySequence().toString(),
@@ -335,7 +325,6 @@ class SettingsDialog(QDialog):
         self._cfg.confirm_delete = self._confirm_delete.isChecked()
         self._cfg.confirm_lock_slot = self._confirm_lock_slot.isChecked()
         self._cfg.auto_name_imports = self._auto_name.isChecked()
-        self._cfg.show_save_path = self._show_save_path.isChecked()
         self._cfg.hotkey_import = self._hk_import.keySequence().toString()
         self._cfg.hotkey_load = self._hk_load.keySequence().toString()
         self._cfg.hotkey_replace = self._hk_replace.keySequence().toString()
@@ -344,7 +333,6 @@ class SettingsDialog(QDialog):
         self._cfg.hotkey_prev_slot = self._hk_prev_slot.keySequence().toString()
         self._cfg.global_hotkeys_enabled = self._global_hotkeys_enabled.isChecked()
         self._cfg.soft_delete = self._soft_delete.isChecked()
-        self._cfg.compact_list = self._compact_list.isChecked()
         self._cfg.hide_details = self._hide_details.isChecked()
         self.accept()
 
