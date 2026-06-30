@@ -709,7 +709,9 @@ class MainWindow(QMainWindow):
             "<b>When a slot is locked, your game's save file will be overwritten with "
             "the selected slot whenever the game tries to change it.</b><br><br>"
             "This prevents the game from saving progress and means any new save data the game "
-            "tries to write will be lost. Unlock the slot before saving in-game."
+            "tries to write will be lost. Unlock the slot before saving in-game.<br><br>"
+            "This feature may not work correctly on all games, behaviour depends on how the "
+            "game handles save files and has not been tested with every title."
         )
         msg.setWordWrap(True)
         msg.setTextFormat(Qt.RichText)
