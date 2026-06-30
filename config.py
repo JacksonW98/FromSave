@@ -1,9 +1,12 @@
 import json
 import logging
 from dataclasses import dataclass, asdict
-from pathlib import Path
 
-_CONFIG_FILE = Path(__file__).parent / "config.json"
+from app_paths import app_dir, migrate_from_bundle
+
+migrate_from_bundle("config.json")
+
+_CONFIG_FILE = app_dir() / "config.json"
 logger = logging.getLogger(__name__)
 
 

@@ -5,10 +5,13 @@ import logging
 import sys
 import threading
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from types import TracebackType
 
-_ROOT = Path(__file__).parent
+from app_paths import app_dir, migrate_from_bundle
+
+migrate_from_bundle("logs")
+
+_ROOT = app_dir()
 LOG_DIR = _ROOT / "logs"
 LOG_FILE = LOG_DIR / "fromsave.log"
 

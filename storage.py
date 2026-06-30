@@ -7,7 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-_ROOT = Path(__file__).parent
+from app_paths import app_dir, migrate_from_bundle
+
+migrate_from_bundle("games.json", "saves")
+
+_ROOT = app_dir()
 SAVES_DIR = _ROOT / "saves"
 GAMES_FILE = _ROOT / "games.json"
 

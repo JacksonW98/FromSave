@@ -4,3 +4,5 @@ config.json
 logs/
 .vscode/
 .DS_Store
+build/
+dist/
