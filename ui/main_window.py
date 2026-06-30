@@ -65,6 +65,11 @@ class MainWindow(QMainWindow):
         self._video_save_timer.setInterval(600)
         self._video_save_timer.timeout.connect(self._flush_video)
 
+        self._run_mode = False
+        self._run_backup_timer = QTimer(self)
+        self._run_backup_timer.setInterval(2 * 60 * 1000)
+        self._run_backup_timer.timeout.connect(self._on_run_backup_tick)
+
         self._guard_watcher = QFileSystemWatcher(self)
         self._guard_watcher.fileChanged.connect(self._on_guarded_file_changed)
         self._guard_slot: Optional[storage.SaveSlot] = None
@@ -364,6 +369,16 @@ class MainWindow(QMainWindow):
         self.ro_btn.toggled.connect(self._on_ro_toggled)
         bar.addWidget(self.ro_btn)
 
+        self.run_mode_btn = QPushButton("Run Mode")
+        self.run_mode_btn.setObjectName("ghostBtn")
+        self.run_mode_btn.setCheckable(True)
+        self.run_mode_btn.setToolTip(
+            "Disables Load Save and Lock Slot to protect the game save,\n"
+            "and takes a rolling backup every 2 minutes (keeps last 3)."
+        )
+        self.run_mode_btn.toggled.connect(self._on_run_mode_toggled)
+        bar.addWidget(self.run_mode_btn)
+
         return bar
 
     # Data loading
@@ -567,7 +582,7 @@ class MainWindow(QMainWindow):
             self.ro_btn.setChecked(is_guarded)
             self.ro_btn.setText(self._ro_btn_text(is_guarded))
             self.ro_btn.blockSignals(False)
-            self.ro_btn.setEnabled(True)
+            self.ro_btn.setEnabled(not self._run_mode)
         else:
             self.info_ro_status.set_value("—")
             self.ro_btn.blockSignals(True)
@@ -660,6 +675,12 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._sync_minimum_size)
 
     def _on_ro_toggled(self, checked: bool) -> None:
+        if checked and self._run_mode:
+            self.ro_btn.blockSignals(True)
+            self.ro_btn.setChecked(False)
+            self.ro_btn.blockSignals(False)
+            self.status_bar.showMessage("Run mode is on — disable it before using lock slot.")
+            return
         if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
             if not self._show_protect_warning():
                 self.ro_btn.blockSignals(True)
@@ -841,6 +862,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Replaced '{slot_name}'.")
 
     def _on_load_save(self) -> None:
+        if self._run_mode:
+            self.status_bar.showMessage("Run mode is on — disable it before loading a save.")
+            return
         row = self.slot_list.currentRow()
         if row < 0 or row >= len(self._slots):
             self.status_bar.showMessage("No slot selected.")
@@ -1037,6 +1061,34 @@ class MainWindow(QMainWindow):
                 + (f" as '{new_name}'." if new_name != slot_name else ".")
             )
 
+    def _on_run_mode_toggled(self, on: bool) -> None:
+        self._run_mode = on
+        self.load_btn.setEnabled(not on)
+        if on:
+            if self.ro_btn.isChecked():
+                self.ro_btn.setChecked(False)
+            self.ro_btn.setEnabled(False)
+            self._run_backup_timer.start()
+            self._on_run_backup_tick()
+            self.status_bar.showMessage(
+                "Run mode on — load and lock disabled, backing up every 2 min.", 5000
+            )
+        else:
+            self._run_backup_timer.stop()
+            if self._current_slot and _slot_save_files(self._current_slot):
+                self.ro_btn.setEnabled(True)
+            self.status_bar.showMessage("Run mode off.", 3000)
+
+    def _on_run_backup_tick(self) -> None:
+        cfg = self._get_game_cfg()
+        if not cfg:
+            return
+        try:
+            storage.take_run_backup(cfg)
+            self.status_bar.showMessage("Run backup saved.", 2000)
+        except Exception as e:
+            self.status_bar.showMessage(f"Run backup failed: {e}", 3000)
+
     def _on_open_settings(self) -> None:
         prev_game = self.game_combo.currentText()
         prev_profile = self.profile_combo.currentText()
@@ -1174,6 +1226,7 @@ class MainWindow(QMainWindow):
         return True
 
     def closeEvent(self, event) -> None:
+        self._run_backup_timer.stop()
         self._global_hotkeys.stop()
         self._flush_notes()
         self._flush_video()

@@ -297,6 +297,48 @@ def _prune_backups(game_name: str, keep: int) -> None:
         shutil.rmtree(old)
 
 
+_RUN_BACKUPS_DIR_NAME = "_run_backups"
+_MAX_RUN_BACKUPS = 3
+
+
+def take_run_backup(game_cfg: GameConfig) -> None:
+    """Snapshot the live game save for run mode; keeps the 3 most recent."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    backup_dir = SAVES_DIR / _RUN_BACKUPS_DIR_NAME / game_cfg.name / timestamp
+    mode = game_cfg.save_mode
+
+    if mode == "file":
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, backup_dir / src.name)
+    elif mode == "files":
+        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
+        if not existing:
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for src in existing:
+            shutil.copy2(src, backup_dir / src.name)
+    elif mode == "folder":
+        src = Path(game_cfg.save_path)
+        if not src.exists():
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, backup_dir / "save_data")
+
+    _prune_run_backups(game_cfg.name)
+
+
+def _prune_run_backups(game_name: str) -> None:
+    backup_game_dir = SAVES_DIR / _RUN_BACKUPS_DIR_NAME / game_name
+    if not backup_game_dir.exists():
+        return
+    dirs = sorted(d for d in backup_game_dir.iterdir() if d.is_dir())
+    for old in dirs[:-_MAX_RUN_BACKUPS]:
+        shutil.rmtree(old)
+
+
 def create_profile(game: str, name: str) -> None:
     (SAVES_DIR / game / name).mkdir(parents=True, exist_ok=False)
 
