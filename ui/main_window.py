@@ -1478,6 +1478,31 @@ class _Banner(QFrame):
         layout.addWidget(lbl)
 
 
+class _ResizeHandle(QWidget):
+    _MIN_H = 120
+
+    def __init__(self, target: QWidget, parent=None):
+        super().__init__(parent)
+        self._target = target
+        self._drag_y = 0.0
+        self._drag_h = 0
+        self.setFixedHeight(5)
+        self.setCursor(Qt.SizeVerCursor)
+        self.setStyleSheet("background: #2a2a3a;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_y = event.globalPosition().y()
+            self._drag_h = self._target.height()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            delta = event.globalPosition().y() - self._drag_y
+            self._target.setFixedHeight(max(self._MIN_H, self._drag_h + int(delta)))
+            event.accept()
+
+
 class _InlineVideoPlayer(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -1583,6 +1608,7 @@ class _InlineVideoPlayer(QWidget):
         web_browser_btn.clicked.connect(self._open_web_in_browser)
         web_row.addWidget(web_browser_btn)
         outer.addWidget(self._web_bar)
+        outer.addWidget(_ResizeHandle(self._stack))
 
         self._local_bar.hide()
         self._web_bar.hide()
