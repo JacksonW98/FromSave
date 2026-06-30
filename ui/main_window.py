@@ -1319,6 +1319,10 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._inline_player.update_height(self.height())
+
     def closeEvent(self, event) -> None:
         logger.info("Application closing: game=%r profile=%r slot=%r",
                     self.game_combo.currentText(),
@@ -1481,9 +1485,10 @@ class _Banner(QFrame):
 class _ResizeHandle(QWidget):
     _MIN_H = 120
 
-    def __init__(self, target: QWidget, parent=None):
+    def __init__(self, target: QWidget, on_resize=None, parent=None):
         super().__init__(parent)
         self._target = target
+        self._on_resize = on_resize
         self._drag_y = 0.0
         self._drag_h = 0
         self.setFixedHeight(5)
@@ -1499,7 +1504,10 @@ class _ResizeHandle(QWidget):
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
             delta = event.globalPosition().y() - self._drag_y
-            self._target.setFixedHeight(max(self._MIN_H, self._drag_h + int(delta)))
+            new_h = max(self._MIN_H, self._drag_h + int(delta))
+            self._target.setFixedHeight(new_h)
+            if self._on_resize:
+                self._on_resize(new_h)
             event.accept()
 
 
@@ -1514,12 +1522,14 @@ class _InlineVideoPlayer(QWidget):
         self._thumb_sink = None
         self._main_sink = None
 
+        self._user_height: int = 0
         self.setFocusPolicy(Qt.ClickFocus)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 4, 0, 0)
         outer.setSpacing(0)
 
         self._stack = QStackedWidget()
+        self._stack.setMinimumHeight(120)
         self._stack.setFixedHeight(320)
 
         if _HAS_MULTIMEDIA:
@@ -1608,10 +1618,20 @@ class _InlineVideoPlayer(QWidget):
         web_browser_btn.clicked.connect(self._open_web_in_browser)
         web_row.addWidget(web_browser_btn)
         outer.addWidget(self._web_bar)
-        outer.addWidget(_ResizeHandle(self._stack))
+        outer.addWidget(_ResizeHandle(self._stack, on_resize=self._on_manual_resize))
 
         self._local_bar.hide()
         self._web_bar.hide()
+
+    def _on_manual_resize(self, h: int) -> None:
+        self._user_height = h
+
+    def update_height(self, win_h: int) -> None:
+        if self._user_height != 0:
+            return
+        new_h = max(120, int(win_h * 0.50))
+        if abs(self._stack.height() - new_h) > 2:
+            self._stack.setFixedHeight(new_h)
 
     def load(self, url: str) -> None:
         self._stop()
