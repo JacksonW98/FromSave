@@ -694,7 +694,7 @@ class MainWindow(QMainWindow):
             warning_shown = True
         if checked and not warning_shown and self._config.confirm_lock_slot:
             if not self._confirm("lock", "Lock slot",
-                                 "Lock this slot?\n\nThe game will not be able to save progress while it is locked."):
+                                 "Lock this slot?\n\nThis will immediately overwrite the game's current save with this slot. The game will not be able to save progress while it is locked."):
                 self.ro_btn.blockSignals(True)
                 self.ro_btn.setChecked(False)
                 self.ro_btn.blockSignals(False)
@@ -711,6 +711,17 @@ class MainWindow(QMainWindow):
         if checked:
             self._guard_slot = self._current_slot
             self._guard_cfg = game_cfg
+            try:
+                storage.load_save(self._guard_slot, self._guard_cfg, make_backup=True)
+            except OSError as e:
+                logger.exception("Lock slot: failed to apply slot on lock: slot=%r", self._current_slot.name)
+                self.status_bar.showMessage(f"Lock slot: failed to apply — {e}")
+                self._guard_slot = None
+                self._guard_cfg = None
+                self.ro_btn.blockSignals(True)
+                self.ro_btn.setChecked(False)
+                self.ro_btn.blockSignals(False)
+                return
             live_paths = [str(f) for f in _live_game_files(game_cfg)]
             if live_paths:
                 self._guard_watcher.addPaths(live_paths)
@@ -739,10 +750,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 16)
 
         msg = QLabel(
-            "<b>When a slot is locked, your game's save file will be overwritten with "
-            "the selected slot whenever the game tries to change it.</b><br><br>"
-            "This prevents the game from saving progress and means any new save data the game "
-            "tries to write will be lost. Unlock the slot before saving in-game.<br><br>"
+            "<b>Locking a slot immediately overwrites the game's current save with the selected "
+            "slot, then keeps overwriting it any time the game tries to change it.</b><br><br>"
+            "Your current save is backed up before the overwrite. The game will not be able to "
+            "save progress while the slot is locked — any new save data the game tries to write "
+            "will be lost. Unlock the slot before saving in-game.<br><br>"
             "This feature may not work correctly on all games, behaviour depends on how the "
             "game handles save files and has not been tested with every title."
         )
