@@ -694,7 +694,8 @@ class MainWindow(QMainWindow):
             warning_shown = True
         if checked and not warning_shown and self._config.confirm_lock_slot:
             if not self._confirm("lock", "Lock slot",
-                                 "Lock this slot?\n\nThis will immediately overwrite the game's current save with this slot. The game will not be able to save progress while it is locked."):
+                                 "Lock this slot?\n\nThis will immediately overwrite the game's current save with this slot. The game will not be able to save progress while it is locked.",
+                                 disable_key="confirm_lock_slot"):
                 self.ro_btn.blockSignals(True)
                 self.ro_btn.setChecked(False)
                 self.ro_btn.blockSignals(False)
@@ -837,12 +838,16 @@ class MainWindow(QMainWindow):
         self._reload_slots(name)
         self.status_bar.showMessage(f"Imported '{name}'.")
 
-    def _confirm(self, action: str, title: str, message: str) -> bool:
+    def _confirm(self, action: str, title: str, message: str,
+                 disable_key: Optional[str] = None) -> bool:
         """Show a Yes/No dialog, allowing the same hotkey to confirm it.
 
         If a dialog for the same action is already open, accepts it and returns
         False (the first pending call will proceed). If a *different* dialog is
         open, does nothing and returns False.
+
+        If disable_key is provided, a "Don't ask again" checkbox is shown. When
+        checked on confirm, the corresponding Config field is set to False and saved.
         """
         if self._confirm_dialog is not None:
             if self._confirm_action == action:
@@ -856,12 +861,24 @@ class MainWindow(QMainWindow):
         dlg.setText(message)
         dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         dlg.setDefaultButton(QMessageBox.No)
+
+        checkbox: Optional[QCheckBox] = None
+        if disable_key:
+            checkbox = QCheckBox("Don't ask again")
+            dlg.setCheckBox(checkbox)
+
         self._confirm_dialog = dlg
         self._confirm_action = action
         result = dlg.exec()
         self._confirm_dialog = None
         self._confirm_action = None
-        return result == QMessageBox.Yes
+
+        confirmed = result == QMessageBox.Yes
+        if confirmed and checkbox is not None and checkbox.isChecked():
+            setattr(self._config, disable_key, False)
+            config.save_config(self._config)
+
+        return confirmed
 
     def _on_replace_save(self) -> None:
         row = self.slot_list.currentRow()
@@ -877,7 +894,8 @@ class MainWindow(QMainWindow):
             return
         if self._config.confirm_replace:
             if not self._confirm("replace", "Replace save",
-                                 f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone."):
+                                 f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone.",
+                                 disable_key="confirm_replace"):
                 return
         slot_name = slot.name
         try:
@@ -927,7 +945,7 @@ class MainWindow(QMainWindow):
         if self._config.confirm_delete:
             msg = (f"Move '{slot.name}' to trash?" if soft
                    else f"Permanently delete '{slot.name}'?\n\nThis cannot be undone.")
-            if not self._confirm("delete", "Delete slot", msg):
+            if not self._confirm("delete", "Delete slot", msg, disable_key="confirm_delete"):
                 return
         self._flush_notes()
         self._flush_video()
