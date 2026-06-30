@@ -328,10 +328,11 @@ class MainWindow(QMainWindow):
 
         self.info_save_path = _InfoRow("Save path", "—")
         self.info_created = _InfoRow("Created", "—")
+        self.info_modified = _InfoRow("Modified", "—")
         self.info_file_size = _InfoRow("File size", "—")
         self.info_ro_status = _InfoRow("Lock", "—")
 
-        for row in (self.info_save_path, self.info_created, self.info_file_size, self.info_ro_status):
+        for row in (self.info_save_path, self.info_created, self.info_modified, self.info_file_size, self.info_ro_status):
             info_layout.addWidget(row)
 
         layout.addWidget(info_box)
@@ -575,6 +576,7 @@ class MainWindow(QMainWindow):
         self.detail_notes.blockSignals(False)
         self._set_video_url(slot.video_url)
         self.info_created.set_value(_fmt_dt(slot.date_created))
+        self.info_modified.set_value(_fmt_dt(slot.date_modified) if slot.date_modified else "—")
         size = _slot_save_size(slot)
         self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
         save_files = _slot_save_files(slot)
@@ -605,6 +607,7 @@ class MainWindow(QMainWindow):
         self.detail_notes.blockSignals(False)
         self._set_video_url("")
         self.info_created.set_value("—")
+        self.info_modified.set_value("—")
         self.info_file_size.set_value("—")
         self.info_ro_status.set_value("—")
         self.ro_btn.blockSignals(True)
