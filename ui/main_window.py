@@ -1014,17 +1014,14 @@ class MainWindow(QMainWindow):
                              slot.game, slot.profile, slot.name, name)
             self.status_bar.showMessage(f"Rename failed: {e}")
             return
-        item = self.slot_list.item(row)
-        ts = _fmt_dt(slot.date_modified or slot.date_created)
-        self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, True))
-        self.detail_name.setText(slot.name)
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
         # Keep order.json in sync whenever it already exists, so the renamed slot
         # stays in position even if the user is not currently in Custom sort mode.
         if self._config.slot_sort == "custom" or storage.load_slot_order(game_name, profile_name):
             storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
-        self.status_bar.showMessage(f"Renamed to '{slot.name}'.")
+        self._reload_slots(name)
+        self.status_bar.showMessage(f"Renamed to '{name}'.")
 
     def _on_slot_context_menu(self, pos) -> None:
         item = self.slot_list.itemAt(pos)
