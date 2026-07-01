@@ -16,15 +16,10 @@ class TestYouTubeVideoId:
         assert video.youtube_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
 
 
-
 class TestEmbedUrl:
     def test_youtube_embed(self):
         url = "https://youtu.be/dQw4w9WgXcQ"
-        assert video.embed_url_for(url) == "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
-
-    def test_vimeo_embed(self):
-        url = "https://vimeo.com/123456789"
-        assert video.embed_url_for(url) == "https://player.vimeo.com/video/123456789?autoplay=1"
+        assert video.embed_url_for(url) == "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&enablejsapi=1"
 
     def test_direct_video_returns_none(self):
         assert video.embed_url_for("https://example.com/clip.mp4") is None

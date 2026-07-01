@@ -202,11 +202,12 @@ class TestLoadSave:
         game_cfg = cfg_files([f1, f2])
         slot = storage.import_save("TestGame", "default", "Slot1", game_cfg)
         (slot.path / "b.dat").unlink()  # remove from slot
+        f2.write_text("corrupted2")
 
         storage.load_save(slot, game_cfg)
 
         assert f1.read_text() == "d1"
-        assert f2.read_text() == "corrupted2" if False else True  # b.dat not restored
+        assert f2.read_text() == "corrupted2"  # b.dat not restored
 
     def test_folder_mode_replaces_game_folder(self, tmp_path):
         src_folder = make_src_folder(tmp_path)
