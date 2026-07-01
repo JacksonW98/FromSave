@@ -37,6 +37,7 @@ class SettingsDialog(QDialog):
             hotkey_next_slot=cfg.hotkey_next_slot,
             hotkey_prev_slot=cfg.hotkey_prev_slot,
             global_hotkeys_enabled=cfg.global_hotkeys_enabled,
+            protect_warning_acknowledged=cfg.protect_warning_acknowledged,
             soft_delete=cfg.soft_delete,
             hide_details=cfg.hide_details,
             window_width=cfg.window_width,
