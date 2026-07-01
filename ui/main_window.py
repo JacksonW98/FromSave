@@ -638,7 +638,8 @@ class MainWindow(QMainWindow):
         has_url = bool(url.strip())
         self.clear_video_btn.setEnabled(has_url)
         if has_url:
-            self._inline_player.load(url.strip())
+            if url.strip() != self._inline_player._url:
+                self._inline_player.load(url.strip())
             self._inline_player.setVisible(True)
             QTimer.singleShot(50, self.update)
         else:
