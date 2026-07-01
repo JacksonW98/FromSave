@@ -9,14 +9,34 @@ from typing import Optional
 
 from app_paths import app_dir, migrate_from_bundle
 
-migrate_from_bundle("games.json", "saves")
+migrate_from_bundle("saves")
 
 _ROOT = app_dir()
 SAVES_DIR = _ROOT / "saves"
-GAMES_FILE = _ROOT / "games.json"
 
 _RESERVED = {"meta.json", "notes.txt"}
+_GAME_CONFIG_FILENAME = "game.json"
 logger = logging.getLogger(__name__)
+
+
+def _load_game_json(game_dir: Path) -> dict:
+    cfg_file = game_dir / _GAME_CONFIG_FILENAME
+    if not cfg_file.exists():
+        return {}
+    try:
+        with open(cfg_file, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to read game config: %s", cfg_file)
+        return {}
+
+
+def _write_game_json(game_dir: Path, data: dict) -> None:
+    (game_dir / _GAME_CONFIG_FILENAME).write_text(
+        json.dumps(data, indent=4), encoding="utf-8"
+    )
+
 
 
 @dataclass
@@ -41,21 +61,22 @@ class SaveSlot:
 
 
 def load_games() -> list[GameConfig]:
-    if not GAMES_FILE.exists():
-        logger.info("Games file not found: %s", GAMES_FILE)
+    if not SAVES_DIR.exists():
         return []
-    with open(GAMES_FILE, encoding="utf-8") as f:
-        data = json.load(f)
-    games = [
-        GameConfig(
-            name=name,
-            save_path=cfg.get("save_path", ""),
-            save_mode=cfg.get("save_mode", "file"),
-            save_paths=cfg.get("save_paths", []),
-        )
-        for name, cfg in data.items()
-    ]
-    logger.info("Loaded %d game config(s) from %s", len(games), GAMES_FILE)
+    games = []
+    for game_dir in sorted(SAVES_DIR.iterdir(), key=lambda p: p.name.lower()):
+        if not game_dir.is_dir() or game_dir.name.startswith("_"):
+            continue
+        data = _load_game_json(game_dir)
+        if not data.get("active", True):
+            continue
+        games.append(GameConfig(
+            name=game_dir.name,
+            save_path=data.get("save_path", ""),
+            save_mode=data.get("save_mode", "file"),
+            save_paths=data.get("save_paths", []),
+        ))
+    logger.info("Loaded %d game config(s) from saves directory", len(games))
     return games
 
 
@@ -553,16 +574,29 @@ def copy_slot_to_profile(slot: SaveSlot, target_profile: str, new_name: str) -> 
 
 
 def save_games(games: list[GameConfig]) -> None:
-    """Write updated game configs back to games.json."""
-    logger.info("Saving %d game config(s) to %s", len(games), GAMES_FILE)
-    data = {}
+    """Write each game's config to its own game.json inside its saves folder."""
+    logger.info("Saving config for %d game(s)", len(games))
+    SAVES_DIR.mkdir(parents=True, exist_ok=True)
     for g in games:
+        game_dir = SAVES_DIR / g.name
+        game_dir.mkdir(parents=True, exist_ok=True)
+        data: dict = {"active": True, "save_mode": g.save_mode}
         if g.save_mode == "files":
-            data[g.name] = {"save_mode": "files", "save_paths": g.save_paths}
+            data["save_paths"] = g.save_paths
         else:
-            data[g.name] = {"save_mode": g.save_mode, "save_path": g.save_path}
-    with open(GAMES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+            data["save_path"] = g.save_path
+        _write_game_json(game_dir, data)
+
+
+def deactivate_game(name: str) -> None:
+    """Mark a game folder as inactive so it no longer appears in the game list."""
+    game_dir = SAVES_DIR / name
+    if not game_dir.exists():
+        return
+    data = _load_game_json(game_dir)
+    data["active"] = False
+    _write_game_json(game_dir, data)
+    logger.info("Deactivated game: %r", name)
 
 
 def load_slot_order(game: str, profile: str) -> list[str]:

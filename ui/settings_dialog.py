@@ -57,6 +57,7 @@ class SettingsDialog(QDialog):
             for g in games
         ]
         self._game_entries: list[dict] = []
+        self._removed_game_names: list[str] = []
         self._build_ui()
         for game in games:
             self._add_game_row(game.name, game.save_mode, game.save_path, game.save_paths)
@@ -272,6 +273,7 @@ class SettingsDialog(QDialog):
         entry["widget"].hide()
         entry["widget"].deleteLater()
         self._game_entries.remove(entry)
+        self._removed_game_names.append(entry["name"])
 
     def _on_add_game(self) -> None:
         dlg = AddGameDialog(self)
@@ -365,6 +367,10 @@ class SettingsDialog(QDialog):
     @property
     def result_config(self) -> config.Config:
         return self._cfg
+
+    @property
+    def removed_game_names(self) -> list[str]:
+        return self._removed_game_names
 
     @property
     def result_games(self) -> list[storage.GameConfig]:

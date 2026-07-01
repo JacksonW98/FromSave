@@ -1189,6 +1189,7 @@ class MainWindow(QMainWindow):
         prev_profile = self.profile_combo.currentText()
         prev_slot = self._current_slot.name if self._current_slot else ""
 
+        self._games = storage.load_games()
         dlg = SettingsDialog(self._config, self._games, self)
         if not dlg.exec():
             return
@@ -1197,6 +1198,10 @@ class MainWindow(QMainWindow):
         config.save_config(self._config)
         self._games = dlg.result_games
         storage.save_games(self._games)
+        active_names = {g.name for g in self._games}
+        for name in dlg.removed_game_names:
+            if name not in active_names:
+                storage.deactivate_game(name)
         logger.info("Settings saved by user")
 
         self.game_combo.blockSignals(True)
