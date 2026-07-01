@@ -75,7 +75,6 @@ def embed_url_for(url: str, autoplay: bool = True) -> str | None:
     return None
 
 
-
 def embed_html(url: str, autoplay: bool = True) -> str | None:
     """Return a minimal HTML page that embeds the video, or None if unsupported."""
     url = normalize_video_url(url)

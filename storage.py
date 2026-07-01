@@ -378,6 +378,8 @@ def snapshot_practice_start(game_cfg: GameConfig) -> None:
         if not src.exists():
             logger.warning("Skipping practice-start snapshot; live save file missing: %s", src)
             return
+        if dest.exists():
+            shutil.rmtree(dest)
         dest.mkdir(parents=True, exist_ok=True)
         logger.info("Practice-start snapshot: %s -> %s", src, dest / src.name)
         shutil.copy2(src, dest / src.name)
