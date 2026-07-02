@@ -99,7 +99,7 @@ Practice Mode locks a slot so the game can't overwrite it. When you enable it:
 2. Click the **Practice Mode** toggle (or use the checkbox in the slot detail panel).
 3. The app immediately loads that slot into the game and then watches the save file. Any time the game tries to save, the app restores the slot, discarding the new data.
 
-**Your current save is backed up before the overwrite**, so you can recover it if needed.
+The game's current save is backed up before the overwrite. When you disable Practice Mode, that save is automatically restored, putting the game back to where it was before you started practicing.
 
 To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, **Load Save** is blocked for that game.
 

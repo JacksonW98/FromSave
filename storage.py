@@ -430,6 +430,49 @@ def snapshot_practice_start(game_cfg: GameConfig) -> None:
         shutil.copytree(src, dest / "save_data")
 
 
+def restore_practice_start(game_cfg: GameConfig) -> None:
+    """Restore the snapshot taken when practice mode was activated back to the live save path."""
+    src_dir = SAVES_DIR / _PRACTICE_START_DIR_NAME / game_cfg.name
+    if not src_dir.exists():
+        logger.warning("No practice-start snapshot to restore for game=%r", game_cfg.name)
+        return
+    mode = game_cfg.save_mode
+
+    if mode == "file":
+        if not game_cfg.save_path:
+            logger.warning("Skipping practice-start restore; save path not configured for game=%r", game_cfg.name)
+            return
+        candidates = [f for f in src_dir.iterdir() if f.is_file()]
+        if not candidates:
+            logger.warning("Practice-start snapshot is empty for game=%r", game_cfg.name)
+            return
+        src = candidates[0]
+        logger.info("Restoring practice-start snapshot: %s -> %s", src, game_cfg.save_path)
+        shutil.copy2(src, Path(game_cfg.save_path))
+    elif mode == "files":
+        for path_str in game_cfg.save_paths:
+            dst = Path(path_str)
+            snapshot_file = src_dir / dst.name
+            if snapshot_file.exists():
+                logger.info("Restoring practice-start snapshot: %s -> %s", snapshot_file, dst)
+                shutil.copy2(snapshot_file, dst)
+            else:
+                logger.warning("Practice-start snapshot missing file %s for game=%r", dst.name, game_cfg.name)
+    elif mode == "folder":
+        if not game_cfg.save_path:
+            logger.warning("Skipping practice-start restore; save path not configured for game=%r", game_cfg.name)
+            return
+        snapshot_data = src_dir / "save_data"
+        if not snapshot_data.exists():
+            logger.warning("Practice-start snapshot has no save_data for game=%r", game_cfg.name)
+            return
+        dst = Path(game_cfg.save_path)
+        if dst.exists():
+            shutil.rmtree(dst)
+        logger.info("Restoring practice-start snapshot: %s -> %s", snapshot_data, dst)
+        shutil.copytree(snapshot_data, dst)
+
+
 _RUN_BACKUPS_DIR_NAME = "_run_backups"
 _MAX_RUN_BACKUPS = 3
 

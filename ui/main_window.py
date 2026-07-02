@@ -733,18 +733,28 @@ class MainWindow(QMainWindow):
             if live_paths:
                 self._guard_watcher.addPaths(live_paths)
         else:
+            guard_cfg = self._guard_cfg
             self._guard_slot = None
             self._guard_cfg = None
             watched = self._guard_watcher.files()
             if watched:
                 self._guard_watcher.removePaths(watched)
+            if guard_cfg is not None:
+                try:
+                    storage.restore_practice_start(guard_cfg)
+                except OSError as e:
+                    logger.exception("Practice Mode: failed to restore pre-practice save: game=%r", guard_cfg.name)
+                    self.ro_btn.setText(self._ro_btn_text(False))
+                    self.info_ro_status.set_value("Inactive")
+                    self.status_bar.showMessage(f"Practice mode off — restore failed: {e}")
+                    return
 
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
         self.ro_btn.setText(self._ro_btn_text(checked))
         self.info_ro_status.set_value("Active" if checked else "Inactive")
         self.status_bar.showMessage(
-            f"'{label}' — {'practice mode is on.' if checked else 'practice mode is off.'}"
+            f"'{label}' — {'practice mode is on.' if checked else 'practice mode is off — save restored.'}"
         )
 
     def _show_protect_warning(self) -> bool:
