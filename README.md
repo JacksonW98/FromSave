@@ -1,6 +1,6 @@
 # FromSave Manager
 
-A save slot manager for PC games. Import your current save, load it back at any time, and organise slots into profiles.
+A save slot manager for PC games. Import your current save, load it back at any time, and organize slots into profiles.
 
 ---
 
@@ -61,7 +61,7 @@ saves/
 
 Elden Ring's save file is named `ER0000.sl2`.
 
-Say you have two saves you want to import, one from your first playthrough and one from a randomiser run, and you want them in separate profiles.
+Say you have two saves you want to import, one from your first playthrough and one from a randomizer run, and you want them in separate profiles.
 
 Create this structure inside your `saves` folder:
 
@@ -73,7 +73,7 @@ saves/
     │   │   └── ER0000.sl2
     │   └── Before Malenia/
     │       └── ER0000.sl2
-    └── Randomiser/
+    └── Randomizer/
         ├── Start/
         │   └── ER0000.sl2
         └── Mountaintops/
@@ -88,6 +88,33 @@ Once copied in, open the app (or switch to a different game and back). Your prof
 - The slot folder name is what you will see in the slot list, so name it something meaningful.
 - Multiple save files in one slot folder are supported (for games with more than one save file).
 - After copying files in, **switch to a different game and back** in the app to refresh the list, or restart the app.
+
+---
+
+## Practice Mode
+
+Practice Mode locks a slot so the game can't overwrite it. When you enable it:
+
+1. Select the slot you want to practice from.
+2. Click the **Practice Mode** toggle (or use the checkbox in the slot detail panel).
+3. The app immediately loads that slot into the game and then watches the save file. Any time the game tries to save, the app restores the slot, discarding the new data.
+
+**Your current save is backed up before the overwrite**, so you can recover it if needed.
+
+To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, **Load Save** is blocked for that game.
+
+> **Note:** Practice Mode may not work correctly on all games — behavior depends on how the game handles save files.
+
+---
+
+## Run Mode
+
+Run Mode is designed for active playthroughs where you want safety backups without accidentally losing your current save. When enabled:
+
+- **Load Save** and **Practice Mode** are both disabled, so the game save can't be overwritten while you're playing.
+- The app automatically takes a rolling backup of the game's save file every 2 minutes, keeping the last 3 backups.
+
+Toggle **Run Mode** on before starting a serious run and off when you're done. The backups are separate from your named slots and are not visible in the slot list, they act as a short-term safety net in case the game corrupts or deletes your save mid-session.
 
 ---
 
