@@ -18,6 +18,7 @@ import config
 import storage
 import video as video_module
 from hotkeys import GlobalHotkeyListener
+from ui.configure_game_dialog import ConfigureGameDialog
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
 
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         self._load_data()
         self.apply_stylesheet()
         self._apply_hotkeys()
+        QTimer.singleShot(0, self._prompt_unconfigured_games)
 
     # UI construction
 
@@ -385,6 +387,31 @@ class MainWindow(QMainWindow):
         return bar
 
     # Data loading
+
+    def _prompt_unconfigured_games(self) -> None:
+        unconfigured = storage.find_unconfigured_games()
+        changed = False
+        for name in unconfigured:
+            dlg = ConfigureGameDialog(name, self)
+            if dlg.exec() != QDialog.Accepted:
+                continue
+            game_cfg = storage.GameConfig(
+                name=name,
+                save_path="",
+                save_mode=dlg.result_mode,
+            )
+            storage.save_game_config(game_cfg)
+            for g in self._games:
+                if g.name == name:
+                    g.save_mode = dlg.result_mode
+                    break
+            changed = True
+            self.status_bar.showMessage(
+                f"'{name}' configured as {dlg.result_mode} — open Settings to set the save path.", 8000
+            )
+        if changed:
+            self._games = storage.load_games()
+            self._load_data()
 
     def _load_data(self) -> None:
         self.game_combo.blockSignals(True)

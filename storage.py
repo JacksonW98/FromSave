@@ -60,6 +60,32 @@ class SaveSlot:
     video_url: str = ""
 
 
+def find_unconfigured_games() -> list[str]:
+    """Return names of game directories that exist but have no game.json."""
+    if not SAVES_DIR.exists():
+        return []
+    result = []
+    for game_dir in sorted(SAVES_DIR.iterdir(), key=lambda p: p.name.lower()):
+        if not game_dir.is_dir() or game_dir.name.startswith("_"):
+            continue
+        if not (game_dir / _GAME_CONFIG_FILENAME).exists():
+            result.append(game_dir.name)
+    return result
+
+
+def save_game_config(game_cfg: GameConfig) -> None:
+    """Write a single game's config to its game.json."""
+    game_dir = SAVES_DIR / game_cfg.name
+    game_dir.mkdir(parents=True, exist_ok=True)
+    data: dict = {"active": True, "save_mode": game_cfg.save_mode}
+    if game_cfg.save_mode == "files":
+        data["save_paths"] = game_cfg.save_paths
+    else:
+        data["save_path"] = game_cfg.save_path
+    _write_game_json(game_dir, data)
+    logger.info("Wrote game config: game=%r mode=%r", game_cfg.name, game_cfg.save_mode)
+
+
 def load_games() -> list[GameConfig]:
     if not SAVES_DIR.exists():
         return []
