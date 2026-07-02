@@ -63,7 +63,7 @@ class AddGameDialog(QDialog):
         layout.addWidget(path_lbl)
         path_row = QHBoxLayout()
         self._path_edit = QLineEdit()
-        self._path_edit.setPlaceholderText("Path to save file or folder…")
+        self._path_edit.setPlaceholderText("Path to save file…")
         self._browse_btn = QPushButton("Browse…")
         self._browse_btn.setFixedWidth(90)
         self._browse_btn.clicked.connect(self._on_browse)

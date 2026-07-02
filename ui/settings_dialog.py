@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
     QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit, QScrollArea,
+    QComboBox,
 )
 
 import config
@@ -17,7 +18,7 @@ class SettingsDialog(QDialog):
     def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(620)
         self.setMaximumHeight(700)
         self._cfg = config.Config(
             confirm_delete=cfg.confirm_delete,
@@ -212,9 +213,15 @@ class SettingsDialog(QDialog):
         row_layout.setSpacing(8)
 
         lbl = QLabel(name)
-        lbl.setFixedWidth(160)
-        mode_labels = {"file": "file", "files": "files", "folder": "folder"}
-        lbl.setToolTip(f"Save type: {mode_labels.get(mode, mode)}")
+        lbl.setFixedWidth(130)
+
+        mode_combo = QComboBox()
+        mode_combo.setFixedWidth(110)
+        mode_combo.addItem("File", "file")
+        mode_combo.addItem("Multiple files", "files")
+        mode_combo.addItem("Folder", "folder")
+        idx = mode_combo.findData(mode)
+        mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
         if mode == "files":
             initial_text = "; ".join(save_paths) if save_paths else path
@@ -240,17 +247,39 @@ class SettingsDialog(QDialog):
         del_btn.clicked.connect(lambda: self._remove_game_row(entry))
 
         row_layout.addWidget(lbl)
+        row_layout.addWidget(mode_combo)
         row_layout.addWidget(edit, 1)
         row_layout.addWidget(reveal_btn, 1)
         row_layout.addWidget(browse_btn)
         row_layout.addWidget(del_btn)
 
+        entry["mode_combo"] = mode_combo
         entry["edit"] = edit
+        entry["browse_btn"] = browse_btn
         entry["reveal_btn"] = reveal_btn
         entry["widget"] = row
 
+        mode_combo.currentIndexChanged.connect(lambda _=None, e=entry: self._on_row_mode_changed(e))
+
         self._game_entries.append(entry)
         self._paths_layout.addWidget(row)
+
+    def _on_row_mode_changed(self, entry: dict) -> None:
+        new_mode = entry["mode_combo"].currentData()
+        if new_mode == entry["mode"]:
+            return
+        entry["mode"] = new_mode
+        entry["edit"].clear()
+        if new_mode == "files":
+            entry["edit"].setPlaceholderText("Paths separated by  ;  — use 'Add files…' to browse")
+            entry["browse_btn"].setText("Add files…")
+            entry["browse_btn"].setFixedWidth(100)
+        else:
+            entry["edit"].setPlaceholderText("Path to save file…" if new_mode == "file" else "Path to save folder…")
+            entry["browse_btn"].setText("Browse…")
+            entry["browse_btn"].setFixedWidth(90)
+        entry["browse_btn"].clicked.disconnect()
+        entry["browse_btn"].clicked.connect(self._make_browse(entry["edit"], new_mode))
 
     def _apply_path_hide(self) -> None:
         hide = self._hide_paths.isChecked()
