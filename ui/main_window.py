@@ -1325,6 +1325,8 @@ class MainWindow(QMainWindow):
 
     def _apply_info_panel(self) -> None:
         hide = self._config.hide_details
+        if hide:
+            self._inline_player.unload()
         self._info_panel.setVisible(not hide)
         self._slot_panel.setMaximumWidth(16777215 if hide else 380)
         QTimer.singleShot(0, self._sync_minimum_size)
