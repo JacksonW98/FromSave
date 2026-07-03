@@ -99,7 +99,7 @@ Practice Mode locks a slot so the game can't overwrite it. When you enable it:
 2. Click the **Practice Mode** toggle (or use the checkbox in the slot detail panel).
 3. The app immediately loads that slot into the game and then watches the save file. Any time the game tries to save, the app restores the slot, discarding the new data.
 
-The game's current save is backed up before the overwrite. When you disable Practice Mode, that save is automatically restored, putting the game back to where it was before you started practicing.
+The game's current save is backed up (to `saves/_practice_start/<Game Name>/`) before the overwrite. When you disable Practice Mode, that save is automatically restored, putting the game back to where it was before you started practicing.
 
 To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, **Load Save** is blocked for that game.
 
@@ -112,9 +112,23 @@ To save progress normally again, disable Practice Mode before saving in-game. Wh
 Run Mode is designed for active playthroughs where you want safety backups without accidentally losing your current save. When enabled:
 
 - **Load Save** and **Practice Mode** are both disabled, so the game save can't be overwritten while you're playing.
-- The app automatically takes a rolling backup of the game's save file every 2 minutes, keeping the last 3 backups.
+- The app automatically takes a rolling backup of the game's save file every 2 minutes (to `saves/_run_backups/<Game Name>/<timestamp>/`), keeping the last 3 backups.
 
 Toggle **Run Mode** on before starting a serious run and off when you're done. The backups are separate from your named slots and are not visible in the slot list, they act as a short-term safety net in case the game corrupts or deletes your save mid-session.
+
+---
+
+## Backups
+
+The app creates a few kinds of automatic safety-net backups. They all live inside the `saves` folder next to your named slots, but don't show up in the slot list — they're for manual disaster recovery unless noted otherwise.
+
+| Backup | Location | When it's taken | Kept | Restored automatically? |
+|---|---|---|---|---|
+| Load Save backup | `saves/_backups/<Game Name>/<timestamp>/` | Every time you click **Load Save**, right before the live save is overwritten | Last 3 | No |
+| Practice Mode snapshot | `saves/_practice_start/<Game Name>/` | Once, when Practice Mode is enabled | 1 (overwritten each time you enable it) | Yes, when Practice Mode is disabled |
+| Run Mode backup | `saves/_run_backups/<Game Name>/<timestamp>/` | Every 2 minutes while Run Mode is on | Last 3 | No |
+
+To recover from a `_backups` or `_run_backups` snapshot, open the relevant timestamped folder and copy the save file(s) back to the game's save location by hand.
 
 ---
 
