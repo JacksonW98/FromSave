@@ -14,6 +14,14 @@ import storage
 from ui.add_game_dialog import AddGameDialog
 
 
+class _NoScrollComboBox(QComboBox):
+    """A QComboBox that ignores mouse wheel events so scrolling the settings
+    panel doesn't accidentally change the selected value."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None):
         super().__init__(parent)
@@ -215,7 +223,7 @@ class SettingsDialog(QDialog):
         lbl = QLabel(name)
         lbl.setFixedWidth(130)
 
-        mode_combo = QComboBox()
+        mode_combo = _NoScrollComboBox()
         mode_combo.setFixedWidth(110)
         mode_combo.addItem("File", "file")
         mode_combo.addItem("Multiple files", "files")
