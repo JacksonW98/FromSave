@@ -1294,7 +1294,16 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             self._on_open_settings()
 
+    def _suspend_hotkeys(self) -> None:
+        """Stop the global listener and disable in-app shortcuts so pressing an
+        existing hotkey while recording a new one in Settings doesn't trigger it."""
+        self._global_hotkeys.stop()
+        self._global_hotkeys_started = False
+        for sc in getattr(self, "_shortcuts", []):
+            sc.setEnabled(False)
+
     def _on_open_settings(self) -> None:
+        self._suspend_hotkeys()
         prev_game = self.game_combo.currentText()
         prev_profile = self.profile_combo.currentText()
         prev_slot = self._current_slot.name if self._current_slot else ""
@@ -1302,6 +1311,7 @@ class MainWindow(QMainWindow):
         self._games = storage.load_games()
         dlg = SettingsDialog(self._config, self._games, self)
         if not dlg.exec():
+            self._apply_hotkeys()
             return
 
         self._config = dlg.result_config
