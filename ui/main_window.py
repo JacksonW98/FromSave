@@ -183,7 +183,9 @@ class MainWindow(QMainWindow):
         bar.addStretch()
 
 
-        self.settings_btn = QPushButton("⚙  Settings")
+        self.settings_btn = QPushButton("  Settings")
+        self.settings_btn.setIcon(QIcon(str(Path(__file__).parent / "settings.svg")))
+        self.settings_btn.setIconSize(QSize(14, 14))
         self.settings_btn.setObjectName("ghostBtn")
         self.settings_btn.clicked.connect(self._on_open_settings)
         bar.addWidget(self.settings_btn)
