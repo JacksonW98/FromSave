@@ -133,7 +133,8 @@ function _onPlayerLoad(el) {{
 </script>
 </head><body>
 <iframe src="{src}"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+  allowfullscreen
   onload="_onPlayerLoad(this)">
 </iframe>
 </body></html>"""
