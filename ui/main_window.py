@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self._startup_updater.download_failed.connect(self._on_startup_download_failed)
         self._startup_update_progress_dlg: Optional[QProgressDialog] = None
 
+        self._global_hotkeys_started = False
         self._build_ui()
         self._apply_info_panel()
 
@@ -253,6 +254,7 @@ class MainWindow(QMainWindow):
         self.slot_list.model().rowsMoved.connect(self._on_rows_moved)
         self.slot_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.slot_list.customContextMenuRequested.connect(self._on_slot_context_menu)
+        self.slot_list.installEventFilter(self)
         layout.addWidget(self.slot_list, 1)
 
         return panel
@@ -1378,6 +1380,7 @@ class MainWindow(QMainWindow):
             cfg.hotkey_next_slot, cfg.hotkey_prev_slot,
             enabled=cfg.global_hotkeys_enabled,
         )
+        self._global_hotkeys_started = started
         if not started:
             # pynput unavailable (e.g. macOS without Accessibility permission) or global hotkeys
             # disabled — fall back to in-app QShortcuts. When pynput IS running it fires on both
@@ -1393,6 +1396,18 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(
                     "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
                 )
+
+    def eventFilter(self, obj, event) -> bool:
+        # When the pynput global listener is running it fires on every press of the
+        # configured key regardless of focus. If that key is also one of slot_list's
+        # own built-in navigation keys (Up/Down/PageUp/PageDown/Home/End), the list
+        # would move the selection itself *and* the global hotkey would move it again,
+        # skipping a slot. Swallow the key here so only the hotkey signal drives it.
+        if obj is self.slot_list and event.type() == QEvent.Type.KeyPress and self._global_hotkeys_started:
+            seq = QKeySequence(event.keyCombination()).toString()
+            if seq and seq in (self._config.hotkey_next_slot, self._config.hotkey_prev_slot):
+                return True
+        return super().eventFilter(obj, event)
 
     def _apply_info_panel(self) -> None:
         hide = self._config.hide_details
