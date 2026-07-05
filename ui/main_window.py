@@ -1566,12 +1566,15 @@ class _InlineVideoPlayer(QWidget):
         self._thumb_player = None
         self._thumb_sink = None
         self._main_sink = None
+        self._fs_window: Optional[QWidget] = None
 
         self._user_height: int = 0
         self.setFocusPolicy(Qt.ClickFocus)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 4, 0, 0)
         outer.setSpacing(0)
+        self._outer_layout = outer
+        self._local_bar_index = -1
 
         self._stack = QStackedWidget()
         self._stack.setMinimumHeight(120)
@@ -1648,6 +1651,16 @@ class _InlineVideoPlayer(QWidget):
         browser_btn.setObjectName("ghostBtn")
         browser_btn.clicked.connect(self._open_in_browser)
         btn_row.addWidget(browser_btn)
+
+        self._icon_fullscreen = QIcon(str(_ui_dir / "fullscreen.svg"))
+        self._icon_fullscreen_exit = QIcon(str(_ui_dir / "fullscreen_exit.svg"))
+        self._fullscreen_btn = QPushButton()
+        self._fullscreen_btn.setIcon(self._icon_fullscreen)
+        self._fullscreen_btn.setIconSize(QSize(14, 14))
+        self._fullscreen_btn.setObjectName("ghostBtn")
+        self._fullscreen_btn.setToolTip("Fullscreen")
+        self._fullscreen_btn.clicked.connect(self._toggle_fullscreen)
+        btn_row.addWidget(self._fullscreen_btn)
 
         local_ctrl.addLayout(btn_row)
         outer.addWidget(self._local_bar)
@@ -1730,6 +1743,7 @@ class _InlineVideoPlayer(QWidget):
         self._web_view.setHtml(html, QUrl("http://localhost/"))
 
     def _stop(self) -> None:
+        self._exit_fullscreen()
         if self._thumb_player is not None:
             self._thumb_player.stop()
             self._thumb_player.deleteLater()
@@ -1799,12 +1813,19 @@ class _InlineVideoPlayer(QWidget):
         QDesktopServices.openUrl(QUrl(self._url))
 
     def eventFilter(self, obj, event) -> bool:
+        if obj is self._video_widget and event.type() == QEvent.Type.MouseButtonDblClick:
+            self._toggle_fullscreen()
+            return True
         if obj is self._video_widget and event.type() == QEvent.Type.MouseButtonRelease:
             self._toggle()
             self.setFocus()
             return True
         if obj is self._video_container and event.type() == QEvent.Type.Resize:
             self._play_overlay.setGeometry(obj.rect())
+        if obj is self._fs_window and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F):
+                self._exit_fullscreen()
+                return True
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event) -> None:
@@ -1812,7 +1833,58 @@ class _InlineVideoPlayer(QWidget):
             self._toggle()
             event.accept()
             return
+        if event.key() == Qt.Key.Key_F:
+            self._toggle_fullscreen()
+            event.accept()
+            return
         super().keyPressEvent(event)
+
+    def _toggle_fullscreen(self) -> None:
+        if self._fs_window is not None:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
+
+    def _enter_fullscreen(self) -> None:
+        if self._fs_window is not None or self._stack.currentIndex() != 0:
+            return
+        self._local_bar_index = self._outer_layout.indexOf(self._local_bar)
+        self._stack.removeWidget(self._video_container)
+        self._outer_layout.removeWidget(self._local_bar)
+        self._fs_window = QWidget()
+        self._fs_window.setWindowFlag(Qt.WindowType.Window)
+        self._fs_window.setStyleSheet("background: #000;")
+        self._fs_window.setWindowTitle("FromSave Manager - Video")
+        layout = QVBoxLayout(self._fs_window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._video_container, 1)
+        layout.addWidget(self._local_bar)
+        self._video_container.show()
+        self._local_bar.show()
+        self._fs_window.installEventFilter(self)
+        self._fs_window.showFullScreen()
+        self._fs_window.setFocus()
+        self._fullscreen_btn.setIcon(self._icon_fullscreen_exit)
+
+    def _exit_fullscreen(self) -> None:
+        if self._fs_window is None:
+            return
+        fs_window = self._fs_window
+        self._fs_window = None
+        fs_window.layout().removeWidget(self._video_container)
+        fs_window.layout().removeWidget(self._local_bar)
+        self._stack.insertWidget(0, self._video_container)
+        self._stack.setCurrentIndex(0)
+        if self._local_bar_index >= 0:
+            self._outer_layout.insertWidget(self._local_bar_index, self._local_bar)
+        else:
+            self._outer_layout.addWidget(self._local_bar)
+        self._local_bar.show()
+        fs_window.removeEventFilter(self)
+        fs_window.close()
+        fs_window.deleteLater()
+        self._fullscreen_btn.setIcon(self._icon_fullscreen)
 
     def _open_web_in_browser(self) -> None:
         if not _HAS_WEBENGINE:
