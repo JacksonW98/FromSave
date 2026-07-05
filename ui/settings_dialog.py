@@ -500,10 +500,6 @@ class SettingsDialog(QDialog):
             return
 
         updater.apply_update_and_restart(staged_dir, zip_path)
-        QMessageBox.information(
-            self, "Restarting to update",
-            "FromSave will now close and restart to finish installing the update.",
-        )
         QApplication.instance().quit()
 
     @property
