@@ -1,4 +1,5 @@
 import os
+import sys
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
@@ -6,12 +7,14 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
     QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit, QScrollArea,
-    QComboBox,
+    QComboBox, QApplication, QProgressDialog,
 )
 
 import config
 import storage
+import updater
 from ui.add_game_dialog import AddGameDialog
+from version import __version__
 
 
 class _NoScrollComboBox(QComboBox):
@@ -67,6 +70,13 @@ class SettingsDialog(QDialog):
         ]
         self._game_entries: list[dict] = []
         self._removed_game_names: list[str] = []
+        self._updater = updater.UpdateChecker()
+        self._updater.check_succeeded.connect(self._on_check_succeeded)
+        self._updater.check_failed.connect(self._on_check_failed)
+        self._updater.download_progress.connect(self._on_download_progress)
+        self._updater.download_ready.connect(self._on_download_ready)
+        self._updater.download_failed.connect(self._on_download_failed)
+        self._update_progress_dlg: QProgressDialog | None = None
         self._build_ui()
         for game in games:
             self._add_game_row(game.name, game.save_mode, game.save_path, game.save_paths)
@@ -91,6 +101,20 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(container)
         layout.setSpacing(14)
         layout.setContentsMargins(16, 16, 16, 12)
+
+        # Updates
+        updates_box = QGroupBox("Updates")
+        updates_layout = QHBoxLayout(updates_box)
+        version_lbl = QLabel(f"Version {__version__}")
+        updates_layout.addWidget(version_lbl)
+        self._update_status_lbl = QLabel("")
+        self._update_status_lbl.setStyleSheet("color: #888899;")
+        updates_layout.addWidget(self._update_status_lbl, 1)
+        self._check_updates_btn = QPushButton("Check for Updates")
+        self._check_updates_btn.setObjectName("ghostBtn")
+        self._check_updates_btn.clicked.connect(self._on_check_updates)
+        updates_layout.addWidget(self._check_updates_btn)
+        layout.addWidget(updates_box)
 
         # Behaviour
         behaviour_box = QGroupBox("Behaviour")
@@ -408,6 +432,79 @@ class SettingsDialog(QDialog):
     @property
     def removed_game_names(self) -> list[str]:
         return self._removed_game_names
+
+    def _on_check_updates(self) -> None:
+        self._check_updates_btn.setEnabled(False)
+        self._update_status_lbl.setText("Checking for updates…")
+        self._updater.start_check()
+
+    def _on_check_failed(self, message: str) -> None:
+        self._check_updates_btn.setEnabled(True)
+        self._update_status_lbl.setText("Update check failed.")
+        QMessageBox.warning(self, "Update check failed", f"Couldn't check for updates:\n\n{message}")
+
+    def _on_check_succeeded(self, info) -> None:
+        self._check_updates_btn.setEnabled(True)
+        if info is None:
+            self._update_status_lbl.setText(f"You're up to date  (v{__version__}).")
+            return
+
+        self._update_status_lbl.setText(f"Version {info.version} is available.")
+        reply = QMessageBox.question(
+            self, "Update available",
+            f"Version {info.version} is available (you have v{__version__}).\n\n"
+            f"{info.notes}\n\nDownload and install it now? "
+            "The app will close and restart automatically.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._check_updates_btn.setEnabled(False)
+        self._update_progress_dlg = QProgressDialog("Downloading update…", "", 0, 100, self)
+        self._update_progress_dlg.setCancelButton(None)
+        self._update_progress_dlg.setWindowModality(Qt.WindowModal)
+        self._update_progress_dlg.setMinimumDuration(0)
+        self._update_progress_dlg.show()
+        self._updater.start_download(info)
+
+    def _on_download_progress(self, downloaded: int, total: int) -> None:
+        if self._update_progress_dlg is None:
+            return
+        if total > 0:
+            self._update_progress_dlg.setValue(int(downloaded * 100 / total))
+        else:
+            self._update_progress_dlg.setLabelText(f"Downloading update… {downloaded // (1024 * 1024)} MB")
+
+    def _on_download_failed(self, message: str) -> None:
+        if self._update_progress_dlg is not None:
+            self._update_progress_dlg.close()
+            self._update_progress_dlg = None
+        self._check_updates_btn.setEnabled(True)
+        self._update_status_lbl.setText("Update download failed.")
+        QMessageBox.warning(self, "Update failed", f"Couldn't download the update:\n\n{message}")
+
+    def _on_download_ready(self, staged_dir, zip_path) -> None:
+        if self._update_progress_dlg is not None:
+            self._update_progress_dlg.close()
+            self._update_progress_dlg = None
+
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self, "Update downloaded",
+                "The update was downloaded, but self-install only works in the packaged "
+                ".exe build. Since this is running from source, please pull the latest "
+                "changes instead.",
+            )
+            self._check_updates_btn.setEnabled(True)
+            return
+
+        updater.apply_update_and_restart(staged_dir, zip_path)
+        QMessageBox.information(
+            self, "Restarting to update",
+            "FromSave will now close and restart to finish installing the update.",
+        )
+        QApplication.instance().quit()
 
     @property
     def result_games(self) -> list[storage.GameConfig]:
