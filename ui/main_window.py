@@ -1883,7 +1883,7 @@ class _InlineVideoPlayer(QWidget):
         self._stack.removeWidget(content)
         self._outer_layout.removeWidget(bar)
         self._fs_window = QWidget()
-        self._fs_window.setWindowFlag(Qt.WindowType.Window)
+        self._fs_window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self._fs_window.setStyleSheet("background: #000;")
         self._fs_window.setWindowTitle("FromSave Manager - Video")
         layout = QVBoxLayout(self._fs_window)
