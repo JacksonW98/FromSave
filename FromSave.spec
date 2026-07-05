@@ -46,6 +46,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    Tree('ui', prefix='ui', excludes=['__pycache__', '*.py', '*.pyc']),
     strip=False,
     upx=True,
     upx_exclude=[],
