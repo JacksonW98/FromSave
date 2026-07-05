@@ -1568,6 +1568,7 @@ class _InlineVideoPlayer(QWidget):
         self._thumb_sink = None
         self._main_sink = None
         self._fs_window: Optional[QWidget] = None
+        self._is_web: bool = False
 
         self._user_height: int = 0
         self.setFocusPolicy(Qt.ClickFocus)
@@ -1675,6 +1676,14 @@ class _InlineVideoPlayer(QWidget):
         web_row = QHBoxLayout(self._web_bar)
         web_row.setContentsMargins(8, 6, 8, 6)
         web_row.addStretch()
+
+        self._web_vol = QSlider(Qt.Horizontal)
+        self._web_vol.setRange(0, 100)
+        self._web_vol.setValue(100)
+        self._web_vol.setFixedWidth(64)
+        self._web_vol.valueChanged.connect(self._set_web_volume)
+        web_row.addWidget(self._web_vol)
+
         web_browser_btn = QPushButton("Open in browser")
         web_browser_btn.setObjectName("ghostBtn")
         web_browser_btn.clicked.connect(self._open_web_in_browser)
@@ -1727,6 +1736,7 @@ class _InlineVideoPlayer(QWidget):
         if _HAS_WEBENGINE:
             self._web_view.load(QUrl("about:blank"))
         self._stack.setCurrentIndex(0)
+        self._is_web = False
         self._local_bar.show()
         self._web_bar.hide()
         self._player = QMediaPlayer(self)
@@ -1750,13 +1760,16 @@ class _InlineVideoPlayer(QWidget):
         if not _HAS_WEBENGINE:
             return
         self._stack.setCurrentIndex(1)
+        self._is_web = True
         self._local_bar.hide()
         self._web_bar.show()
         html = video_module.embed_html(url, autoplay=False) or video_module.unsupported_html()
         self._web_view.setHtml(html, QUrl("http://localhost/"))
+        QTimer.singleShot(1200, lambda: self._set_web_volume(self._web_vol.value()))
 
     def _stop(self) -> None:
         self._exit_fullscreen()
+        self._is_web = False
         if self._thumb_player is not None:
             self._thumb_player.stop()
             self._thumb_player.deleteLater()
@@ -1940,6 +1953,18 @@ class _InlineVideoPlayer(QWidget):
             sep = '&' if '?' in url else '?'
             url = f"{url}{sep}t={int(t)}"
         QDesktopServices.openUrl(QUrl(url))
+
+    def _set_web_volume(self, v: int) -> None:
+        if not _HAS_WEBENGINE or not self._is_web:
+            return
+        mute_cmd = "unMute" if v > 0 else "mute"
+        self._web_view.page().runJavaScript(
+            "(function(){"
+            "var f=document.querySelector('iframe');if(!f)return;"
+            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"setVolume\",\"args\":[" + str(v) + "]}','*');"
+            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"" + mute_cmd + "\",\"args\":\"\"}','*');"
+            "})()"
+        )
 
     def _toggle(self) -> None:
         if self._player is None:
