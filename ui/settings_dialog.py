@@ -54,6 +54,7 @@ class SettingsDialog(QDialog):
             hide_details=cfg.hide_details,
             window_width=cfg.window_width,
             window_height=cfg.window_height,
+            check_updates_on_startup=cfg.check_updates_on_startup,
         )
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
@@ -61,6 +62,7 @@ class SettingsDialog(QDialog):
             cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
             cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
             cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
+            cfg.check_updates_on_startup,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -104,16 +106,21 @@ class SettingsDialog(QDialog):
 
         # Updates
         updates_box = QGroupBox("Updates")
-        updates_layout = QHBoxLayout(updates_box)
+        updates_box_layout = QVBoxLayout(updates_box)
+        updates_row = QHBoxLayout()
         version_lbl = QLabel(f"Version {__version__}")
-        updates_layout.addWidget(version_lbl)
+        updates_row.addWidget(version_lbl)
         self._update_status_lbl = QLabel("")
         self._update_status_lbl.setStyleSheet("color: #888899;")
-        updates_layout.addWidget(self._update_status_lbl, 1)
+        updates_row.addWidget(self._update_status_lbl, 1)
         self._check_updates_btn = QPushButton("Check for Updates")
         self._check_updates_btn.setObjectName("ghostBtn")
         self._check_updates_btn.clicked.connect(self._on_check_updates)
-        updates_layout.addWidget(self._check_updates_btn)
+        updates_row.addWidget(self._check_updates_btn)
+        updates_box_layout.addLayout(updates_row)
+        self._check_updates_on_startup = QCheckBox("Automatically check for updates when opening")
+        self._check_updates_on_startup.setChecked(self._cfg.check_updates_on_startup)
+        updates_box_layout.addWidget(self._check_updates_on_startup)
         layout.addWidget(updates_box)
 
         # Behaviour
@@ -385,6 +392,7 @@ class SettingsDialog(QDialog):
             self._hk_next_slot.keySequence().toString(),
             self._hk_prev_slot.keySequence().toString(),
             self._global_hotkeys_enabled.isChecked(),
+            self._check_updates_on_startup.isChecked(),
         )
         if current_cfg != self._initial_cfg:
             return True
@@ -423,6 +431,7 @@ class SettingsDialog(QDialog):
         self._cfg.global_hotkeys_enabled = self._global_hotkeys_enabled.isChecked()
         self._cfg.soft_delete = self._soft_delete.isChecked()
         self._cfg.hide_details = self._hide_details.isChecked()
+        self._cfg.check_updates_on_startup = self._check_updates_on_startup.isChecked()
         self.accept()
 
     @property

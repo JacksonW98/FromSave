@@ -34,6 +34,7 @@ class Config:
     hide_details: bool = False
     window_width: int = 0
     window_height: int = 0
+    check_updates_on_startup: bool = True
 
 
 def load_config() -> Config:
@@ -67,6 +68,7 @@ def load_config() -> Config:
             hide_details=data.get("hide_details", False),
             window_width=data.get("window_width", 0),
             window_height=data.get("window_height", 0),
+            check_updates_on_startup=data.get("check_updates_on_startup", True),
         )
     except (json.JSONDecodeError, OSError):
         logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)

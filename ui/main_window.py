@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,15 +13,18 @@ from PySide6.QtWidgets import (
     QPushButton, QStatusBar, QSplitter, QFrame,
     QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox, QMenu,
     QLineEdit, QFileDialog, QStackedWidget, QSlider, QScrollArea, QDialog, QCheckBox,
+    QProgressDialog, QApplication,
 )
 
 import config
 import storage
+import updater
 import video as video_module
 from hotkeys import GlobalHotkeyListener
 from ui.configure_game_dialog import ConfigureGameDialog
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
+from version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +90,14 @@ class MainWindow(QMainWindow):
 
         self._global_hotkeys = GlobalHotkeyListener(self)
 
+        self._startup_updater = updater.UpdateChecker()
+        self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
+        self._startup_updater.check_failed.connect(self._on_startup_check_failed)
+        self._startup_updater.download_progress.connect(self._on_startup_download_progress)
+        self._startup_updater.download_ready.connect(self._on_startup_download_ready)
+        self._startup_updater.download_failed.connect(self._on_startup_download_failed)
+        self._startup_update_progress_dlg: Optional[QProgressDialog] = None
+
         self._build_ui()
         self._apply_info_panel()
 
@@ -104,6 +116,8 @@ class MainWindow(QMainWindow):
         self.apply_stylesheet()
         self._apply_hotkeys()
         QTimer.singleShot(0, self._prompt_unconfigured_games)
+        if self._config.check_updates_on_startup:
+            QTimer.singleShot(0, self._startup_updater.start_check)
 
     # UI construction
 
@@ -415,6 +429,60 @@ class MainWindow(QMainWindow):
         if changed:
             self._games = storage.load_games()
             self._load_data()
+
+    def _on_startup_check_failed(self, message: str) -> None:
+        logger.warning("Startup update check failed: %s", message)
+
+    def _on_startup_check_succeeded(self, info) -> None:
+        if info is None:
+            return
+        reply = QMessageBox.question(
+            self, "Update available",
+            f"Version {info.version} is available (you have v{__version__}).\n\n"
+            f"{info.notes}\n\nDownload and install it now? "
+            "The app will close and restart automatically.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._startup_update_progress_dlg = QProgressDialog("Downloading update…", "", 0, 100, self)
+        self._startup_update_progress_dlg.setCancelButton(None)
+        self._startup_update_progress_dlg.setWindowModality(Qt.WindowModal)
+        self._startup_update_progress_dlg.setMinimumDuration(0)
+        self._startup_update_progress_dlg.show()
+        self._startup_updater.start_download(info)
+
+    def _on_startup_download_progress(self, downloaded: int, total: int) -> None:
+        if self._startup_update_progress_dlg is None:
+            return
+        if total > 0:
+            self._startup_update_progress_dlg.setValue(int(downloaded * 100 / total))
+        else:
+            self._startup_update_progress_dlg.setLabelText(f"Downloading update… {downloaded // (1024 * 1024)} MB")
+
+    def _on_startup_download_failed(self, message: str) -> None:
+        if self._startup_update_progress_dlg is not None:
+            self._startup_update_progress_dlg.close()
+            self._startup_update_progress_dlg = None
+        QMessageBox.warning(self, "Update failed", f"Couldn't download the update:\n\n{message}")
+
+    def _on_startup_download_ready(self, staged_dir, zip_path) -> None:
+        if self._startup_update_progress_dlg is not None:
+            self._startup_update_progress_dlg.close()
+            self._startup_update_progress_dlg = None
+
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self, "Update downloaded",
+                "The update was downloaded, but self-install only works in the packaged "
+                ".exe build. Since this is running from source, please pull the latest "
+                "changes instead.",
+            )
+            return
+
+        updater.apply_update_and_restart(staged_dir, zip_path)
+        QApplication.instance().quit()
 
     def _load_data(self) -> None:
         self.game_combo.blockSignals(True)
