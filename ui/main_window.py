@@ -1400,7 +1400,7 @@ class MainWindow(QMainWindow):
         prev_hk = _hotkey_label(cfg.overlay_hotkey_prev_slot)
         next_hk = _hotkey_label(cfg.overlay_hotkey_next_slot)
         if prev_hk or next_hk:
-            nav = " ".join(s for s in (f"◀ {prev_hk}" if prev_hk else "", f"{next_hk} ▶" if next_hk else "") if s)
+            nav = " ".join(s for s in (f"▲ {prev_hk}" if prev_hk else "", f"{next_hk} ▼" if next_hk else "") if s)
             parts.append(nav)
 
         _add("Hide", cfg.hotkey_toggle_overlay)
@@ -1410,15 +1410,11 @@ class MainWindow(QMainWindow):
         if not self._overlay.isVisible():
             return
         row = self.slot_list.currentRow()
-        current = self._slots[row].name if 0 <= row < len(self._slots) else ""
-        prev_name = self._slots[row - 1].name if row > 0 else ""
-        next_name = self._slots[row + 1].name if 0 <= row < len(self._slots) - 1 else ""
         self._overlay.update_content(
             game=self.game_combo.currentText(),
             profile=self.profile_combo.currentText(),
-            current=current,
-            prev_name=prev_name,
-            next_name=next_name,
+            slot_names=[s.name for s in self._slots],
+            current_row=row,
             hotkeys_line=self._overlay_hotkeys_line(),
         )
 

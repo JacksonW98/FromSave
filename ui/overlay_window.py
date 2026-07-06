@@ -1,7 +1,28 @@
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
+
+_SLOT_ROWS = 5
+_SLOT_RADIUS = _SLOT_ROWS // 2
+
+
+def _slot_window(total: int, current_row: int, max_count: int = _SLOT_ROWS) -> range:
+    """Pick a window of slot indices centered on current_row, extending toward
+    whichever side has room when the window is clipped by a list boundary."""
+    if total <= 0:
+        return range(0)
+    start = max(0, current_row - _SLOT_RADIUS)
+    end = min(total - 1, current_row + _SLOT_RADIUS)
+    count = min(max_count, total)
+    while (end - start + 1) < count:
+        if start > 0:
+            start -= 1
+        elif end < total - 1:
+            end += 1
+        else:
+            break
+    return range(start, end + 1)
 
 
 class OverlayWindow(QWidget):
@@ -17,7 +38,7 @@ class OverlayWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.setFixedSize(260, 152)
+        self.setFixedSize(260, 222)
         self.setStyleSheet(
             "OverlayWindow { background: #17171d; border: 1px solid #3a3a46; border-radius: 8px; }"
         )
@@ -34,39 +55,57 @@ class OverlayWindow(QWidget):
         self._game_lbl.setStyleSheet("color: #e8e8ee; font-size: 13px; font-weight: 600; background: transparent;")
         self._profile_lbl = QLabel("")
         self._profile_lbl.setStyleSheet("color: #a8a8b8; font-size: 11px; background: transparent;")
-        self._current_lbl = QLabel("")
-        self._current_lbl.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: 600; background: transparent;")
-        self._neighbors_lbl = QLabel("")
-        self._neighbors_lbl.setStyleSheet("color: #888899; font-size: 11px; background: transparent;")
-        self._neighbors_lbl.setWordWrap(True)
-        self._hotkeys_lbl = QLabel("")
-        self._hotkeys_lbl.setStyleSheet("color: #6f6f80; font-size: 9px; background: transparent;")
-        self._hotkeys_lbl.setWordWrap(True)
 
         layout.addWidget(self._game_lbl)
         layout.addWidget(self._profile_lbl)
         layout.addSpacing(6)
-        layout.addWidget(self._current_lbl)
-        layout.addWidget(self._neighbors_lbl)
+
+        self._slot_lbls: List[QLabel] = []
+        for _ in range(_SLOT_ROWS):
+            lbl = QLabel("")
+            lbl.setContentsMargins(6, 2, 6, 2)
+            layout.addWidget(lbl)
+            self._slot_lbls.append(lbl)
+
         layout.addStretch()
+
+        self._hotkeys_lbl = QLabel("")
+        self._hotkeys_lbl.setStyleSheet("color: #6f6f80; font-size: 9px; background: transparent;")
+        self._hotkeys_lbl.setWordWrap(True)
         layout.addWidget(self._hotkeys_lbl)
 
     def set_opacity(self, value: float) -> None:
         self.setWindowOpacity(max(0.2, min(1.0, value)))
 
     def update_content(
-        self, game: str, profile: str, current: str, prev_name: str, next_name: str,
+        self, game: str, profile: str, slot_names: List[str], current_row: int,
         hotkeys_line: str = "",
     ) -> None:
         self._game_lbl.setText(game or "No game selected")
         self._profile_lbl.setText(profile)
-        self._current_lbl.setText(current or "No slot selected")
-        parts = []
-        if prev_name:
-            parts.append(f"◀ {prev_name}")
-        if next_name:
-            parts.append(f"{next_name} ▶")
-        self._neighbors_lbl.setText("   ".join(parts))
+
+        window = list(_slot_window(len(slot_names), current_row))
+        for i, lbl in enumerate(self._slot_lbls):
+            if i >= len(window):
+                lbl.setText("")
+                lbl.setStyleSheet("background: transparent;")
+                continue
+            idx = window[i]
+            is_current = idx == current_row
+            if is_current:
+                lbl.setText(f"▸ {slot_names[idx]}")
+                lbl.setStyleSheet(
+                    "color: #ffffff; font-size: 12px; font-weight: 600; "
+                    "background: rgba(255,255,255,0.08); border-radius: 4px;"
+                )
+            else:
+                lbl.setText(f"   {slot_names[idx]}")
+                lbl.setStyleSheet("color: #9393a2; font-size: 11px; background: transparent;")
+
+        if not slot_names:
+            self._slot_lbls[0].setText("No slot selected")
+            self._slot_lbls[0].setStyleSheet("color: #9393a2; font-size: 11px; background: transparent;")
+
         self._hotkeys_lbl.setText(hotkeys_line)
 
     def show_at_saved_or_default(self, pos_x: int, pos_y: int) -> None:

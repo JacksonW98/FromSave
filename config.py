@@ -40,8 +40,8 @@ class Config:
     overlay_hotkey_load: str = "F9"
     overlay_hotkey_replace: str = ""
     overlay_hotkey_ro_toggle: str = "F6"
-    overlay_hotkey_next_slot: str = "Ctrl+Right"
-    overlay_hotkey_prev_slot: str = "Ctrl+Left"
+    overlay_hotkey_next_slot: str = "Ctrl+Down"
+    overlay_hotkey_prev_slot: str = "Ctrl+Up"
     overlay_opacity: float = 0.85
     overlay_pos_x: int = -1
     overlay_pos_y: int = -1
@@ -84,8 +84,8 @@ def load_config() -> Config:
             overlay_hotkey_load=data.get("overlay_hotkey_load", "F9"),
             overlay_hotkey_replace=data.get("overlay_hotkey_replace", ""),
             overlay_hotkey_ro_toggle=data.get("overlay_hotkey_ro_toggle", "F6"),
-            overlay_hotkey_next_slot=data.get("overlay_hotkey_next_slot", "Ctrl+Right"),
-            overlay_hotkey_prev_slot=data.get("overlay_hotkey_prev_slot", "Ctrl+Left"),
+            overlay_hotkey_next_slot=data.get("overlay_hotkey_next_slot", "Ctrl+Down"),
+            overlay_hotkey_prev_slot=data.get("overlay_hotkey_prev_slot", "Ctrl+Up"),
             overlay_opacity=data.get("overlay_opacity", 0.85),
             overlay_pos_x=data.get("overlay_pos_x", -1),
             overlay_pos_y=data.get("overlay_pos_y", -1),
