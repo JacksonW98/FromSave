@@ -35,6 +35,16 @@ class Config:
     window_width: int = 0
     window_height: int = 0
     check_updates_on_startup: bool = True
+    hotkey_toggle_overlay: str = "F8"
+    overlay_hotkey_import: str = "F5"
+    overlay_hotkey_load: str = "F9"
+    overlay_hotkey_replace: str = ""
+    overlay_hotkey_ro_toggle: str = "F6"
+    overlay_hotkey_next_slot: str = "Ctrl+Right"
+    overlay_hotkey_prev_slot: str = "Ctrl+Left"
+    overlay_opacity: float = 0.85
+    overlay_pos_x: int = -1
+    overlay_pos_y: int = -1
 
 
 def load_config() -> Config:
@@ -69,6 +79,16 @@ def load_config() -> Config:
             window_width=data.get("window_width", 0),
             window_height=data.get("window_height", 0),
             check_updates_on_startup=data.get("check_updates_on_startup", True),
+            hotkey_toggle_overlay=data.get("hotkey_toggle_overlay", "Ins"),
+            overlay_hotkey_import=data.get("overlay_hotkey_import", "F5"),
+            overlay_hotkey_load=data.get("overlay_hotkey_load", "F9"),
+            overlay_hotkey_replace=data.get("overlay_hotkey_replace", ""),
+            overlay_hotkey_ro_toggle=data.get("overlay_hotkey_ro_toggle", "F6"),
+            overlay_hotkey_next_slot=data.get("overlay_hotkey_next_slot", "Ctrl+Right"),
+            overlay_hotkey_prev_slot=data.get("overlay_hotkey_prev_slot", "Ctrl+Left"),
+            overlay_opacity=data.get("overlay_opacity", 0.85),
+            overlay_pos_x=data.get("overlay_pos_x", -1),
+            overlay_pos_y=data.get("overlay_pos_y", -1),
         )
     except (json.JSONDecodeError, OSError):
         logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)

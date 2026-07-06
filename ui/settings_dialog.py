@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
     QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit, QScrollArea,
-    QComboBox, QApplication, QProgressDialog,
+    QComboBox, QApplication, QProgressDialog, QSlider,
 )
 
 import config
@@ -55,6 +55,16 @@ class SettingsDialog(QDialog):
             window_width=cfg.window_width,
             window_height=cfg.window_height,
             check_updates_on_startup=cfg.check_updates_on_startup,
+            hotkey_toggle_overlay=cfg.hotkey_toggle_overlay,
+            overlay_hotkey_import=cfg.overlay_hotkey_import,
+            overlay_hotkey_load=cfg.overlay_hotkey_load,
+            overlay_hotkey_replace=cfg.overlay_hotkey_replace,
+            overlay_hotkey_ro_toggle=cfg.overlay_hotkey_ro_toggle,
+            overlay_hotkey_next_slot=cfg.overlay_hotkey_next_slot,
+            overlay_hotkey_prev_slot=cfg.overlay_hotkey_prev_slot,
+            overlay_opacity=cfg.overlay_opacity,
+            overlay_pos_x=cfg.overlay_pos_x,
+            overlay_pos_y=cfg.overlay_pos_y,
         )
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
@@ -63,6 +73,10 @@ class SettingsDialog(QDialog):
             cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
             cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
             cfg.check_updates_on_startup,
+            cfg.hotkey_toggle_overlay, cfg.overlay_hotkey_import,
+            cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
+            cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot,
+            cfg.overlay_hotkey_prev_slot, cfg.overlay_opacity,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -178,6 +192,47 @@ class SettingsDialog(QDialog):
         self._hk_next_slot = self._make_hotkey_row(hotkeys_layout, "Next slot", self._cfg.hotkey_next_slot)
         self._hk_prev_slot = self._make_hotkey_row(hotkeys_layout, "Previous slot", self._cfg.hotkey_prev_slot)
         layout.addWidget(hotkeys_box)
+
+        # Overlay
+        overlay_box = QGroupBox("Overlay")
+        overlay_layout = QVBoxLayout(overlay_box)
+        overlay_layout.setSpacing(6)
+
+        opacity_row = QWidget()
+        opacity_row.setStyleSheet("background: transparent;")
+        opacity_row_layout = QHBoxLayout(opacity_row)
+        opacity_row_layout.setContentsMargins(0, 0, 0, 0)
+        opacity_row_layout.setSpacing(8)
+        opacity_lbl = QLabel("Opacity")
+        opacity_lbl.setFixedWidth(130)
+        opacity_row_layout.addWidget(opacity_lbl)
+        self._overlay_opacity_slider = QSlider(Qt.Horizontal)
+        self._overlay_opacity_slider.setRange(20, 100)
+        self._overlay_opacity_slider.setValue(round(self._cfg.overlay_opacity * 100))
+        opacity_row_layout.addWidget(self._overlay_opacity_slider, 1)
+        self._overlay_opacity_value_lbl = QLabel(f"{self._overlay_opacity_slider.value()}%")
+        self._overlay_opacity_value_lbl.setFixedWidth(40)
+        self._overlay_opacity_slider.valueChanged.connect(
+            lambda v: self._overlay_opacity_value_lbl.setText(f"{v}%")
+        )
+        opacity_row_layout.addWidget(self._overlay_opacity_value_lbl)
+        overlay_layout.addWidget(opacity_row)
+
+        self._hk_toggle_overlay = self._make_hotkey_row(
+            overlay_layout, "Toggle overlay", self._cfg.hotkey_toggle_overlay
+        )
+
+        overlay_hint = QLabel("Overlay hotkeys  (active only while the overlay is shown)")
+        overlay_hint.setStyleSheet("color: #888899; font-size: 11px;")
+        overlay_layout.addWidget(overlay_hint)
+
+        self._ov_hk_import = self._make_hotkey_row(overlay_layout, "Import save", self._cfg.overlay_hotkey_import)
+        self._ov_hk_load = self._make_hotkey_row(overlay_layout, "Load save", self._cfg.overlay_hotkey_load)
+        self._ov_hk_replace = self._make_hotkey_row(overlay_layout, "Replace save", self._cfg.overlay_hotkey_replace)
+        self._ov_hk_ro = self._make_hotkey_row(overlay_layout, "Practice Mode", self._cfg.overlay_hotkey_ro_toggle)
+        self._ov_hk_next_slot = self._make_hotkey_row(overlay_layout, "Next slot", self._cfg.overlay_hotkey_next_slot)
+        self._ov_hk_prev_slot = self._make_hotkey_row(overlay_layout, "Previous slot", self._cfg.overlay_hotkey_prev_slot)
+        layout.addWidget(overlay_box)
 
         # Game save paths
         paths_box = QGroupBox("Game save paths")
@@ -393,6 +448,14 @@ class SettingsDialog(QDialog):
             self._hk_prev_slot.keySequence().toString(),
             self._global_hotkeys_enabled.isChecked(),
             self._check_updates_on_startup.isChecked(),
+            self._hk_toggle_overlay.keySequence().toString(),
+            self._ov_hk_import.keySequence().toString(),
+            self._ov_hk_load.keySequence().toString(),
+            self._ov_hk_replace.keySequence().toString(),
+            self._ov_hk_ro.keySequence().toString(),
+            self._ov_hk_next_slot.keySequence().toString(),
+            self._ov_hk_prev_slot.keySequence().toString(),
+            self._overlay_opacity_slider.value() / 100.0,
         )
         if current_cfg != self._initial_cfg:
             return True
@@ -432,6 +495,14 @@ class SettingsDialog(QDialog):
         self._cfg.soft_delete = self._soft_delete.isChecked()
         self._cfg.hide_details = self._hide_details.isChecked()
         self._cfg.check_updates_on_startup = self._check_updates_on_startup.isChecked()
+        self._cfg.overlay_opacity = self._overlay_opacity_slider.value() / 100.0
+        self._cfg.hotkey_toggle_overlay = self._hk_toggle_overlay.keySequence().toString()
+        self._cfg.overlay_hotkey_import = self._ov_hk_import.keySequence().toString()
+        self._cfg.overlay_hotkey_load = self._ov_hk_load.keySequence().toString()
+        self._cfg.overlay_hotkey_replace = self._ov_hk_replace.keySequence().toString()
+        self._cfg.overlay_hotkey_ro_toggle = self._ov_hk_ro.keySequence().toString()
+        self._cfg.overlay_hotkey_next_slot = self._ov_hk_next_slot.keySequence().toString()
+        self._cfg.overlay_hotkey_prev_slot = self._ov_hk_prev_slot.keySequence().toString()
         self.accept()
 
     @property

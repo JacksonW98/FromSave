@@ -27,6 +27,30 @@ def _is_trusted() -> bool:
         logger.exception("Failed to check macOS Accessibility trust status")
         return False
 
+# Qt's portable QKeySequence names for special keys that don't match pynput's
+# Key enum names when merely lowercased (e.g. "Return" -> "enter", not "return").
+_SPECIAL_KEY_MAP = {
+    "ins": "insert",
+    "del": "delete",
+    "return": "enter",
+    "enter": "enter",
+    "esc": "esc",
+    "backspace": "backspace",
+    "tab": "tab",
+    "home": "home",
+    "end": "end",
+    "pgup": "page_up",
+    "pgdown": "page_down",
+    "capslock": "caps_lock",
+    "numlock": "num_lock",
+    "scrolllock": "scroll_lock",
+    "print": "print_screen",
+    "pause": "pause",
+    "menu": "menu",
+    "space": "space",
+}
+
+
 def _qt_to_pynput(qt_seq: str) -> str | None:
     """Convert a Qt portable key sequence string (e.g. 'Ctrl+S', 'F5') to pynput GlobalHotKeys format."""
     if not qt_seq:
@@ -47,6 +71,8 @@ def _qt_to_pynput(qt_seq: str) -> str | None:
             out.append("<shift>")
         elif len(p) >= 2 and p[0] == "F" and p[1:].isdigit():
             out.append(f"<{p.lower()}>")
+        elif p.lower() in _SPECIAL_KEY_MAP:
+            out.append(f"<{_SPECIAL_KEY_MAP[p.lower()]}>")
         elif len(p) == 1:
             out.append(p.lower())
         else:
@@ -64,6 +90,7 @@ class GlobalHotkeyListener(QObject):
     ro_toggle_triggered = Signal()
     next_slot_triggered = Signal()
     prev_slot_triggered = Signal()
+    toggle_overlay_triggered = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -77,6 +104,7 @@ class GlobalHotkeyListener(QObject):
         hotkey_ro: str,
         hotkey_next_slot: str = "",
         hotkey_prev_slot: str = "",
+        hotkey_toggle_overlay: str = "",
         enabled: bool = True,
     ) -> bool:
         """Start the listener. Returns True if started, False if unavailable, not trusted, or disabled."""
@@ -104,6 +132,8 @@ class GlobalHotkeyListener(QObject):
             bindings[pk] = self.next_slot_triggered.emit
         if pk := _qt_to_pynput(hotkey_prev_slot):
             bindings[pk] = self.prev_slot_triggered.emit
+        if pk := _qt_to_pynput(hotkey_toggle_overlay):
+            bindings[pk] = self.toggle_overlay_triggered.emit
 
         if not bindings:
             logger.info("No global hotkeys configured")

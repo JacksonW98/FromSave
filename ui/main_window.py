@@ -22,6 +22,7 @@ import updater
 import video as video_module
 from hotkeys import GlobalHotkeyListener
 from ui.configure_game_dialog import ConfigureGameDialog
+from ui.overlay_window import OverlayWindow
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
 from version import __version__
@@ -89,6 +90,9 @@ class MainWindow(QMainWindow):
         self._protect_warning_shown: bool = False
 
         self._global_hotkeys = GlobalHotkeyListener(self)
+        self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
+        self._overlay_action_hotkeys = GlobalHotkeyListener(self)
+        self._overlay = OverlayWindow(on_moved=self._on_overlay_moved, parent=self)
 
         self._startup_updater = updater.UpdateChecker()
         self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
@@ -113,9 +117,18 @@ class MainWindow(QMainWindow):
         self._global_hotkeys.next_slot_triggered.connect(self._select_next_slot)
         self._global_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
 
+        self._overlay_toggle_hotkey.toggle_overlay_triggered.connect(self._toggle_overlay)
+        self._overlay_action_hotkeys.import_triggered.connect(self._on_import_save)
+        self._overlay_action_hotkeys.load_triggered.connect(self._on_load_save)
+        self._overlay_action_hotkeys.replace_triggered.connect(self._on_replace_save)
+        self._overlay_action_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
+        self._overlay_action_hotkeys.next_slot_triggered.connect(self._select_next_slot)
+        self._overlay_action_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
+
         self._load_data()
         self.apply_stylesheet()
         self._apply_hotkeys()
+        self._apply_overlay_toggle_hotkey()
         QTimer.singleShot(0, self._prompt_unconfigured_games)
         if self._config.check_updates_on_startup:
             QTimer.singleShot(0, self._startup_updater.start_check)
@@ -696,6 +709,7 @@ class MainWindow(QMainWindow):
             self.ro_btn.setText(self._ro_btn_text(False))
             self.ro_btn.blockSignals(False)
             self.ro_btn.setEnabled(False)
+        self._refresh_overlay()
 
     def _clear_detail(self) -> None:
         self._current_slot = None
@@ -715,6 +729,7 @@ class MainWindow(QMainWindow):
         self.ro_btn.setText(self._ro_btn_text(False))
         self.ro_btn.blockSignals(False)
         self.ro_btn.setEnabled(False)
+        self._refresh_overlay()
 
     def _on_notes_changed(self) -> None:
         self._notes_save_timer.start()
@@ -1294,13 +1309,123 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             self._on_open_settings()
 
-    def _suspend_hotkeys(self) -> None:
-        """Stop the global listener and disable in-app shortcuts so pressing an
-        existing hotkey while recording a new one in Settings doesn't trigger it."""
+    def _stop_main_hotkeys(self) -> None:
         self._global_hotkeys.stop()
         self._global_hotkeys_started = False
         for sc in getattr(self, "_shortcuts", []):
             sc.setEnabled(False)
+
+    def _suspend_hotkeys(self) -> None:
+        """Stop all global listeners and disable in-app shortcuts so pressing an
+        existing hotkey while recording a new one in Settings doesn't trigger it."""
+        self._stop_main_hotkeys()
+        self._overlay_toggle_hotkey.stop()
+        self._overlay_action_hotkeys.stop()
+        toggle_sc = getattr(self, "_overlay_toggle_shortcut", None)
+        if toggle_sc is not None:
+            toggle_sc.setEnabled(False)
+
+    def _restore_hotkeys(self) -> None:
+        """Restart whichever hotkey set should currently be active (main window or
+        overlay), plus the always-on overlay-toggle hotkey. Use this instead of
+        _apply_hotkeys() after anything that called _suspend_hotkeys(), so the
+        overlay's own hotkeys aren't clobbered by the main window's while it's shown."""
+        if self._overlay.isVisible():
+            self._start_overlay_action_hotkeys()
+        else:
+            self._apply_hotkeys()
+        self._apply_overlay_toggle_hotkey()
+
+    def _apply_overlay_toggle_hotkey(self) -> None:
+        sc = getattr(self, "_overlay_toggle_shortcut", None)
+        if sc is not None:
+            sc.setEnabled(False)
+            sc.deleteLater()
+            self._overlay_toggle_shortcut = None
+
+        started = self._overlay_toggle_hotkey.start(
+            "", "", "", "", "", "",
+            hotkey_toggle_overlay=self._config.hotkey_toggle_overlay,
+            enabled=True,
+        )
+        if not started and self._config.hotkey_toggle_overlay:
+            # pynput unavailable/untrusted — fall back to a local shortcut (only
+            # works while the main window has focus, unlike the global listener).
+            sc = QShortcut(QKeySequence(self._config.hotkey_toggle_overlay), self)
+            sc.activated.connect(self._toggle_overlay)
+            self._overlay_toggle_shortcut = sc
+
+    def _start_overlay_action_hotkeys(self) -> None:
+        cfg = self._config
+        self._overlay_action_hotkeys.start(
+            cfg.overlay_hotkey_import, cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
+            cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot, cfg.overlay_hotkey_prev_slot,
+            enabled=True,
+        )
+
+    def _toggle_overlay(self) -> None:
+        if self._overlay.isVisible():
+            self._hide_overlay()
+        else:
+            self._show_overlay()
+
+    def _show_overlay(self) -> None:
+        self._stop_main_hotkeys()
+        self._overlay.set_opacity(self._config.overlay_opacity)
+        self._overlay.show_at_saved_or_default(self._config.overlay_pos_x, self._config.overlay_pos_y)
+        self._overlay.show()
+        self._refresh_overlay()
+        self._start_overlay_action_hotkeys()
+
+    def _hide_overlay(self) -> None:
+        self._overlay_action_hotkeys.stop()
+        self._overlay.hide()
+        self._apply_hotkeys()
+        self._apply_overlay_toggle_hotkey()
+
+    def _overlay_hotkeys_line(self) -> str:
+        cfg = self._config
+        parts: list[str] = []
+
+        def _add(label: str, key: str) -> None:
+            hk = _hotkey_label(key)
+            if hk:
+                parts.append(f"{label} {hk}")
+
+        _add("Import", cfg.overlay_hotkey_import)
+        _add("Load", cfg.overlay_hotkey_load)
+        _add("Replace", cfg.overlay_hotkey_replace)
+        _add("Practice", cfg.overlay_hotkey_ro_toggle)
+
+        prev_hk = _hotkey_label(cfg.overlay_hotkey_prev_slot)
+        next_hk = _hotkey_label(cfg.overlay_hotkey_next_slot)
+        if prev_hk or next_hk:
+            nav = " ".join(s for s in (f"◀ {prev_hk}" if prev_hk else "", f"{next_hk} ▶" if next_hk else "") if s)
+            parts.append(nav)
+
+        _add("Hide", cfg.hotkey_toggle_overlay)
+        return "   ".join(parts)
+
+    def _refresh_overlay(self) -> None:
+        if not self._overlay.isVisible():
+            return
+        row = self.slot_list.currentRow()
+        current = self._slots[row].name if 0 <= row < len(self._slots) else ""
+        prev_name = self._slots[row - 1].name if row > 0 else ""
+        next_name = self._slots[row + 1].name if 0 <= row < len(self._slots) - 1 else ""
+        self._overlay.update_content(
+            game=self.game_combo.currentText(),
+            profile=self.profile_combo.currentText(),
+            current=current,
+            prev_name=prev_name,
+            next_name=next_name,
+            hotkeys_line=self._overlay_hotkeys_line(),
+        )
+
+    def _on_overlay_moved(self, x: int, y: int) -> None:
+        self._config.overlay_pos_x = x
+        self._config.overlay_pos_y = y
+        config.save_config(self._config)
 
     def _on_open_settings(self) -> None:
         self._suspend_hotkeys()
@@ -1311,7 +1436,7 @@ class MainWindow(QMainWindow):
         self._games = storage.load_games()
         dlg = SettingsDialog(self._config, self._games, self)
         if not dlg.exec():
-            self._apply_hotkeys()
+            self._restore_hotkeys()
             return
 
         self._config = dlg.result_config
@@ -1358,7 +1483,7 @@ class MainWindow(QMainWindow):
             self._reload_slots()
 
         self._apply_info_panel()
-        self._apply_hotkeys()
+        self._restore_hotkeys()
         self.status_bar.showMessage("Settings saved.")
 
     def _ro_btn_text(self, is_on: bool) -> str:
@@ -1471,6 +1596,9 @@ class MainWindow(QMainWindow):
                     self._current_slot.name if self._current_slot else "")
         self._run_backup_timer.stop()
         self._global_hotkeys.stop()
+        self._overlay_toggle_hotkey.stop()
+        self._overlay_action_hotkeys.stop()
+        self._overlay.close()
         self._flush_notes()
         self._flush_video()
         self._config.last_game = self.game_combo.currentText()
