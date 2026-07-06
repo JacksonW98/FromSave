@@ -1437,6 +1437,7 @@ class MainWindow(QMainWindow):
 
         self._config = dlg.result_config
         config.save_config(self._config)
+        self._overlay.set_opacity(self._config.overlay_opacity)
         self._games = dlg.result_games
         storage.save_games(self._games)
         active_names = {g.name for g in self._games}
