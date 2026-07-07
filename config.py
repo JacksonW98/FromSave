@@ -35,7 +35,7 @@ class Config:
     window_width: int = 0
     window_height: int = 0
     check_updates_on_startup: bool = True
-    hotkey_toggle_overlay: str = "F8"
+    hotkey_toggle_overlay: str = "Ins"
     overlay_hotkey_import: str = "F5"
     overlay_hotkey_load: str = "F9"
     overlay_hotkey_replace: str = ""
