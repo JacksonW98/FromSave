@@ -132,6 +132,39 @@ To recover from a `_backups` or `_run_backups` snapshot, open the relevant times
 
 ---
 
+## Hotkeys & overlay
+
+Under **Settings > Hotkeys** you can bind keys for Import save, Load save, Replace save, Practice Mode, Next slot, and Previous slot.
+
+- By default these only work while the app window is focused.
+- Check **Enable global hotkeys** to make them work system-wide, even while tabbed into the game. On macOS this requires granting the app Accessibility permission.
+
+A separate **Overlay** can be shown over the game (default hotkey: **Insert**) with its own independent set of hotkeys, active only while the overlay is visible. It's a small, draggable, semi-transparent panel showing the current game, profile, and nearby slots, plus its own opacity slider in Settings.
+
+---
+
+## Attaching a video to a slot
+
+Each slot has an optional **Video** field in the detail panel where you can paste a link and it will play inline:
+
+- YouTube links (including `youtu.be` and Shorts links)
+- Direct video files (`.mp4`, `.webm`, `.ogg`, `.mov`, `.m4v`, `.mkv`), either a URL or a local file via **Browse**
+
+Use the player's fullscreen button to expand it, and the volume slider for local/YouTube playback. Click **Clear** to remove the video from a slot.
+
+> **Note:** Twitch VODs and clips are not currently supported for inline playback, due to the way Twitch handles video embeds. Use **Open in browser** instead.
+
+---
+
+## Checking for updates
+
+FromSave can check GitHub for newer releases and update itself in place.
+
+- Click **Check for Updates** in Settings to check manually, or enable **Automatically check for updates when opening** to check on every launch.
+- If an update is found, downloading and applying it replaces the app files and restarts FromSave automatically.
+
+---
+
 ## Adding a new game
 
 1. Open **Settings** and click **Add game**.
