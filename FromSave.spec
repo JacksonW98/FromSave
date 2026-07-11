@@ -31,7 +31,9 @@ if sys.platform.startswith('linux'):
     # runtime; shipping the build container's copies breaks GLX elsewhere.
     _gl_libs = (
         'libGL.so', 'libGLX', 'libEGL', 'libOpenGL.so', 'libGLdispatch',
-        'libgbm', 'libglapi', 'libdrm.so',
+        'libgbm', 'libglapi', 'libdrm',
+        # Old toolchain runtimes shadow the host's and break its Mesa driver.
+        'libstdc++', 'libgcc_s',
     )
     a.binaries = [
         b for b in a.binaries
