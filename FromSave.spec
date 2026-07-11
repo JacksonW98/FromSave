@@ -1,4 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('fromsave.ico', '.')]
@@ -22,6 +25,19 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+if sys.platform.startswith('linux'):
+    # GL/driver userspace libs must match the host's graphics driver at
+    # runtime; shipping the build container's copies breaks GLX elsewhere.
+    _gl_libs = (
+        'libGL.so', 'libGLX', 'libEGL', 'libOpenGL.so', 'libGLdispatch',
+        'libgbm', 'libglapi', 'libdrm.so',
+    )
+    a.binaries = [
+        b for b in a.binaries
+        if not os.path.basename(b[0]).startswith(_gl_libs)
+    ]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
