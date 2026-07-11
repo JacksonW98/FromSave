@@ -126,9 +126,19 @@ def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) 
 
     app_dir = app_paths.app_dir()
     exe_name = Path(sys.executable).name
-    cleanup_paths = [str(staged_dir.parent)]
+    # staged_dir is either the mkdtemp staging root or one level inside it;
+    # never clean up anything above the staging root (its parent is /tmp).
+    staging_root = (
+        staged_dir
+        if staged_dir.name.startswith("fromsave_update_extract_")
+        else staged_dir.parent
+    )
+    cleanup_paths = [str(staging_root)]
     if zip_path is not None:
         cleanup_paths.append(str(zip_path))
+    for p in cleanup_paths:
+        if "fromsave_update" not in Path(p).name:
+            raise RuntimeError(f"Refusing to delete unexpected path: {p}")
 
     if sys.platform == "win32":
         bat_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.bat"
