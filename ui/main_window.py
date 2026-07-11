@@ -20,7 +20,7 @@ import config
 import storage
 import updater
 import video as video_module
-from hotkeys import GlobalHotkeyListener
+from hotkeys import GlobalHotkeyListener, is_wayland_session
 from ui.configure_game_dialog import ConfigureGameDialog
 from ui.overlay_window import OverlayWindow
 from ui.profiles_dialog import ProfilesDialog
@@ -1525,9 +1525,11 @@ class MainWindow(QMainWindow):
             _bind(cfg.hotkey_prev_slot, self._select_prev_slot)
             global_keys = [cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]
             if cfg.global_hotkeys_enabled and any(global_keys):
-                self.status_bar.showMessage(
-                    "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart.", 6000
-                )
+                if is_wayland_session():
+                    msg = "Global hotkeys aren't supported under Wayland (SteamOS) — using in-app shortcuts while focused."
+                else:
+                    msg = "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart."
+                self.status_bar.showMessage(msg, 6000)
 
     def eventFilter(self, obj, event) -> bool:
         # When the pynput global listener is running it fires on every press of the

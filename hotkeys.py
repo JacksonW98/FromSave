@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.util
 import logging
+import os
 import sys
 
 from PySide6.QtCore import QObject, Signal
@@ -26,6 +27,15 @@ def _is_trusted() -> bool:
     except Exception:
         logger.exception("Failed to check macOS Accessibility trust status")
         return False
+
+
+def is_wayland_session() -> bool:
+    """Return True if running on Linux under a Wayland session (e.g. SteamOS Desktop/Gaming Mode).
+
+    pynput's global hotkeys rely on X11 and generally don't receive events under Wayland,
+    so callers use this to show an accurate fallback message instead of a misleading one.
+    """
+    return sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
 # Qt's portable QKeySequence names for special keys that don't match pynput's
 # Key enum names when merely lowercased (e.g. "Return" -> "enter", not "return").

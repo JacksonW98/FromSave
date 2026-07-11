@@ -27,6 +27,20 @@ Any other game can be added manually via **Settings > Add game**.
 
 ---
 
+## Linux / SteamOS
+
+FromSave also ships as a Linux build, which runs natively on SteamOS in Desktop Mode.
+
+1. Extract the release zip anywhere (for example a `Games/FromSave/` folder in your home directory).
+2. Make the binary executable: `chmod +x FromSave`.
+3. Run it directly.
+
+The `saves/` folder sits beside the `FromSave` binary, exactly like `saves/` sits beside `FromSave.exe` on Windows.
+
+> **Note:** Global hotkeys are not supported under Wayland (SteamOS Desktop Mode's default session) — this is a limitation of the underlying hotkey library, not a bug. Hotkeys still work normally while the FromSave window is focused.
+
+---
+
 ## Manually importing existing saves
 
 If you already have save files backed up somewhere, you can drop them straight into the `saves` folder and the app will detect them automatically without using the Import button.
@@ -137,7 +151,7 @@ To recover from a `_backups` or `_run_backups` snapshot, open the relevant times
 Under **Settings > Hotkeys** you can bind keys for Import save, Load save, Replace save, Practice Mode, Next slot, and Previous slot.
 
 - By default these only work while the app window is focused.
-- Check **Enable global hotkeys** to make them work system-wide, even while tabbed into the game. On macOS this requires granting the app Accessibility permission.
+- Check **Enable global hotkeys** to make them work system-wide, even while tabbed into the game. On macOS this requires granting the app Accessibility permission. On SteamOS/Linux (Wayland), global hotkeys are not currently supported, hotkeys work only while the FromSave window is focused.
 
 A separate **Overlay** can be shown over the game (default hotkey: **Insert**) with its own independent set of hotkeys, active only while the overlay is visible. It's a small, draggable, semi-transparent panel showing the current game, profile, and nearby slots, plus its own opacity slider in Settings.
 

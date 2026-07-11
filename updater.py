@@ -24,8 +24,17 @@ logger = logging.getLogger(__name__)
 
 REPO = "JacksonW98/fromsave"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
-ASSET_NAME = "FromSave.zip"
+ASSET_NAME_WINDOWS = "FromSave.zip"
+ASSET_NAME_LINUX = "FromSave-linux.zip"
 _USER_AGENT = "FromSave-Manager-Updater"
+
+
+def _asset_name() -> str:
+    return ASSET_NAME_LINUX if sys.platform.startswith("linux") else ASSET_NAME_WINDOWS
+
+
+def _expected_binary_name() -> str:
+    return "FromSave.exe" if sys.platform == "win32" else "FromSave"
 
 
 class UpdateInfo:
@@ -58,9 +67,10 @@ def check_latest_release(timeout: float = 10.0) -> Optional[UpdateInfo]:
     if not tag or not is_newer(tag):
         return None
 
-    asset = next((a for a in data.get("assets", []) if a.get("name") == ASSET_NAME), None)
+    asset_name = _asset_name()
+    asset = next((a for a in data.get("assets", []) if a.get("name") == asset_name), None)
     if asset is None:
-        logger.warning("Release %s has no %s asset", tag, ASSET_NAME)
+        logger.warning("Release %s has no %s asset", tag, asset_name)
         return None
 
     return UpdateInfo(
@@ -93,17 +103,18 @@ def download_update(info: UpdateInfo, on_progress=None) -> Path:
 
 
 def extract_update(zip_path: Path) -> Path:
-    """Extract the downloaded zip and return the folder containing FromSave.exe."""
+    """Extract the downloaded zip and return the folder containing the FromSave binary."""
     staging_dir = Path(tempfile.mkdtemp(prefix="fromsave_update_extract_"))
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(staging_dir)
 
-    if (staging_dir / "FromSave.exe").exists():
+    binary_name = _expected_binary_name()
+    if (staging_dir / binary_name).exists():
         return staging_dir
     for child in staging_dir.iterdir():
-        if child.is_dir() and (child / "FromSave.exe").exists():
+        if child.is_dir() and (child / binary_name).exists():
             return child
-    raise FileNotFoundError("FromSave.exe not found in downloaded release")
+    raise FileNotFoundError(f"{binary_name} not found in downloaded release")
 
 
 def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) -> None:
@@ -119,23 +130,44 @@ def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) 
     if zip_path is not None:
         cleanup_paths.append(str(zip_path))
 
-    bat_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.bat"
-    cleanup_cmds = "\n".join(f'del /q "{p}" >nul 2>&1\nrmdir /s /q "{p}" >nul 2>&1' for p in cleanup_paths)
-    bat_contents = f"""@echo off
+    if sys.platform == "win32":
+        bat_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.bat"
+        cleanup_cmds = "\n".join(f'del /q "{p}" >nul 2>&1\nrmdir /s /q "{p}" >nul 2>&1' for p in cleanup_paths)
+        bat_contents = f"""@echo off
 timeout /t 3 /nobreak >nul
 robocopy "{staged_dir}" "{app_dir}" /E /R:5 /W:2 >nul
 start "" "{app_dir / exe_name}"
 {cleanup_cmds}
 del "%~f0"
 """
-    bat_path.write_text(bat_contents)
+        bat_path.write_text(bat_contents)
 
-    subprocess.Popen(
-        ["cmd", "/c", str(bat_path)],
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-        cwd=str(app_dir),
-    )
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+            cwd=str(app_dir),
+        )
+    else:
+        sh_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.sh"
+        cleanup_cmds = "\n".join(f'rm -rf "{p}"' for p in cleanup_paths)
+        sh_contents = f"""#!/bin/sh
+sleep 3
+cp -a "{staged_dir}/." "{app_dir}/"
+chmod +x "{app_dir / exe_name}"
+"{app_dir / exe_name}" >/dev/null 2>&1 &
+{cleanup_cmds}
+rm -f "$0"
+"""
+        sh_path.write_text(sh_contents)
+        os.chmod(sh_path, 0o755)
+
+        subprocess.Popen(
+            ["/bin/sh", str(sh_path)],
+            start_new_session=True,
+            close_fds=True,
+            cwd=str(app_dir),
+        )
 
 
 class UpdateChecker(QObject):
