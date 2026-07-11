@@ -34,6 +34,11 @@ if sys.platform.startswith('linux'):
         'libgbm', 'libglapi', 'libdrm',
         # Old toolchain runtimes shadow the host's and break its Mesa driver.
         'libstdc++', 'libgcc_s',
+        # X11/xcb client stack and Mesa support libs: the host GL driver
+        # links against these, so bundled older copies break GLX init.
+        'libX11', 'libxcb-', 'libXext', 'libXrender', 'libXrandr',
+        'libXfixes', 'libXcomposite', 'libXdamage', 'libXau', 'libXdmcp',
+        'libexpat', 'libz.so', 'libzstd', 'libffi',
     )
     a.binaries = [
         b for b in a.binaries
