@@ -105,10 +105,19 @@ def download_update(info: UpdateInfo, on_progress=None) -> Path:
 def extract_update(zip_path: Path) -> Path:
     """Extract the downloaded zip and return the folder containing the FromSave binary."""
     staging_dir = Path(tempfile.mkdtemp(prefix="fromsave_update_extract_"))
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(staging_dir)
-
     binary_name = _expected_binary_name()
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            extracted = zf.extract(info, staging_dir)
+            if info.is_dir():
+                continue
+            # zipfile drops Unix permissions on extract; restore them from
+            # the zip entry, or force exec on known binaries as a fallback.
+            mode = (info.external_attr >> 16) & 0o7777
+            if mode:
+                os.chmod(extracted, mode)
+            elif info.filename.endswith(binary_name) or "libexec/" in info.filename:
+                os.chmod(extracted, 0o755)
     if (staging_dir / binary_name).exists():
         return staging_dir
     for child in staging_dir.iterdir():

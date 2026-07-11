@@ -30,10 +30,20 @@ def _configure_ssl_certs() -> None:
             break
 
 
+def _fix_helper_permissions() -> None:
+    """Restore exec bits lost when an older updater extracted a release zip."""
+    if not (getattr(sys, "frozen", False) and sys.platform.startswith("linux")):
+        return
+    helper = app_paths.bundled_dir() / "PySide6" / "Qt" / "libexec" / "QtWebEngineProcess"
+    if helper.exists() and not os.access(helper, os.X_OK):
+        os.chmod(helper, 0o755)
+
+
 def main() -> None:
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FromSave.Manager")
     _configure_ssl_certs()
+    _fix_helper_permissions()
 
     log_file = app_logging.configure_logging()
     app_logging.install_exception_hooks()
