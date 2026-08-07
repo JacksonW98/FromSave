@@ -1170,8 +1170,13 @@ class MainWindow(QMainWindow):
         if 0 <= row < len(self._slots):
             current_name = self._slots[row].name
             self._overlay.begin_rename(current_name)
+            # The text listener suppresses keystrokes on Windows.  Stop the
+            # action listener first so it does not miss F2's key-release event
+            # and get stuck considering F2 held down.
+            self._overlay_action_hotkeys.stop()
             if not self._overlay_rename_input.start(current_name):
                 self._overlay.end_rename()
+                self._start_overlay_action_hotkeys()
                 self.status_bar.showMessage("Global keyboard input is unavailable.")
 
     def _on_overlay_rename_requested(self, name: str) -> None:
@@ -1179,10 +1184,10 @@ class MainWindow(QMainWindow):
         name = name.strip()
         row = self.slot_list.currentRow()
         if not name or (0 <= row < len(self._slots) and name == self._slots[row].name):
-            self._overlay.end_rename()
+            self._finish_overlay_rename()
             return
         if self._rename_current_slot(name):
-            self._overlay.end_rename()
+            self._finish_overlay_rename()
             self._refresh_overlay()
         elif self._overlay.isVisible():
             # Keep the field open after a validation or filesystem error so the
@@ -1191,7 +1196,12 @@ class MainWindow(QMainWindow):
 
     def _cancel_overlay_rename(self) -> None:
         self._overlay_rename_input.stop()
+        self._finish_overlay_rename()
+
+    def _finish_overlay_rename(self) -> None:
         self._overlay.end_rename()
+        if self._overlay.isVisible():
+            self._start_overlay_action_hotkeys()
 
     def _on_slot_context_menu(self, pos) -> None:
         item = self.slot_list.itemAt(pos)

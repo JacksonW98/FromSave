@@ -213,11 +213,16 @@ class GlobalTextInputListener(QObject):
 
     def stop(self) -> None:
         if self._listener is not None:
+            listener = self._listener
+            self._listener = None
             try:
-                self._listener.stop()
+                listener.stop()
+                # The low-level Windows hook is released asynchronously.  Wait
+                # briefly so a immediately-following overlay hotkey is handled
+                # by GlobalHotKeys instead of being swallowed by this listener.
+                listener.join(0.25)
             except Exception:
                 logger.exception("Failed to stop global text input listener cleanly")
-            self._listener = None
 
     def _on_press(self, key):
         if key == _kb.Key.enter:
