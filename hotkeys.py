@@ -97,6 +97,7 @@ class GlobalHotkeyListener(QObject):
     import_triggered = Signal()
     load_triggered = Signal()
     replace_triggered = Signal()
+    rename_triggered = Signal()
     ro_toggle_triggered = Signal()
     next_slot_triggered = Signal()
     prev_slot_triggered = Signal()
@@ -114,6 +115,7 @@ class GlobalHotkeyListener(QObject):
         hotkey_ro: str,
         hotkey_next_slot: str = "",
         hotkey_prev_slot: str = "",
+        hotkey_rename: str = "",
         hotkey_toggle_overlay: str = "",
         enabled: bool = True,
     ) -> bool:
@@ -136,6 +138,8 @@ class GlobalHotkeyListener(QObject):
             bindings[pk] = self.load_triggered.emit
         if pk := _qt_to_pynput(hotkey_replace):
             bindings[pk] = self.replace_triggered.emit
+        if pk := _qt_to_pynput(hotkey_rename):
+            bindings[pk] = self.rename_triggered.emit
         if pk := _qt_to_pynput(hotkey_ro):
             bindings[pk] = self.ro_toggle_triggered.emit
         if pk := _qt_to_pynput(hotkey_next_slot):
@@ -168,3 +172,71 @@ class GlobalHotkeyListener(QObject):
                 logger.exception("Failed to stop global hotkey listener cleanly")
                 pass
             self._listener = None
+
+
+class GlobalTextInputListener(QObject):
+    """Capture a short text entry globally while the overlay is in rename mode.
+
+    On Windows the input is suppressed so the game does not also receive the
+    rename keystrokes.
+    """
+
+    text_changed = Signal(str)
+    submitted = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._listener = None
+        self._text = ""
+        self._replace_on_next_character = False
+
+    def start(self, initial_text: str) -> bool:
+        self.stop()
+        if not _AVAILABLE or not _is_trusted():
+            return False
+
+        self._text = initial_text
+        self._replace_on_next_character = True
+        try:
+            self._listener = _kb.Listener(
+                on_press=self._on_press,
+                suppress=sys.platform == "win32",
+            )
+            self._listener.daemon = True
+            self._listener.start()
+            return True
+        except Exception:
+            logger.exception("Failed to start global text input listener")
+            self._listener = None
+            return False
+
+    def stop(self) -> None:
+        if self._listener is not None:
+            try:
+                self._listener.stop()
+            except Exception:
+                logger.exception("Failed to stop global text input listener cleanly")
+            self._listener = None
+
+    def _on_press(self, key):
+        if key == _kb.Key.enter:
+            self.submitted.emit(self._text)
+            return False
+        if key == _kb.Key.esc:
+            self.cancelled.emit()
+            return False
+        if key == _kb.Key.backspace:
+            if self._replace_on_next_character:
+                self._text = ""
+                self._replace_on_next_character = False
+            else:
+                self._text = self._text[:-1]
+            self.text_changed.emit(self._text)
+            return
+
+        char = getattr(key, "char", None)
+        if char and char.isprintable():
+            self._text = char if self._replace_on_next_character else self._text + char
+            self._replace_on_next_character = False
+            self.text_changed.emit(self._text)

@@ -39,6 +39,7 @@ class Config:
     overlay_hotkey_import: str = "F5"
     overlay_hotkey_load: str = "F9"
     overlay_hotkey_replace: str = ""
+    overlay_hotkey_rename: str = "F2"
     overlay_hotkey_ro_toggle: str = "F6"
     overlay_hotkey_next_slot: str = "Ctrl+Down"
     overlay_hotkey_prev_slot: str = "Ctrl+Up"
@@ -83,6 +84,7 @@ def load_config() -> Config:
             overlay_hotkey_import=data.get("overlay_hotkey_import", "F5"),
             overlay_hotkey_load=data.get("overlay_hotkey_load", "F9"),
             overlay_hotkey_replace=data.get("overlay_hotkey_replace", ""),
+            overlay_hotkey_rename=data.get("overlay_hotkey_rename", "F2"),
             overlay_hotkey_ro_toggle=data.get("overlay_hotkey_ro_toggle", "F6"),
             overlay_hotkey_next_slot=data.get("overlay_hotkey_next_slot", "Ctrl+Down"),
             overlay_hotkey_prev_slot=data.get("overlay_hotkey_prev_slot", "Ctrl+Up"),

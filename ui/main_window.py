@@ -20,7 +20,7 @@ import config
 import storage
 import updater
 import video as video_module
-from hotkeys import GlobalHotkeyListener, is_wayland_session
+from hotkeys import GlobalHotkeyListener, GlobalTextInputListener, is_wayland_session
 from ui.configure_game_dialog import ConfigureGameDialog
 from ui.overlay_window import OverlayWindow
 from ui.profiles_dialog import ProfilesDialog
@@ -92,7 +92,11 @@ class MainWindow(QMainWindow):
         self._global_hotkeys = GlobalHotkeyListener(self)
         self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
         self._overlay_action_hotkeys = GlobalHotkeyListener(self)
+        self._overlay_rename_input = GlobalTextInputListener(self)
         self._overlay = OverlayWindow(on_moved=self._on_overlay_moved, parent=self)
+        self._overlay_rename_input.text_changed.connect(self._overlay.set_rename_text)
+        self._overlay_rename_input.submitted.connect(self._on_overlay_rename_requested)
+        self._overlay_rename_input.cancelled.connect(self._cancel_overlay_rename)
 
         self._startup_updater = updater.UpdateChecker()
         self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
@@ -121,6 +125,7 @@ class MainWindow(QMainWindow):
         self._overlay_action_hotkeys.import_triggered.connect(self._on_import_save)
         self._overlay_action_hotkeys.load_triggered.connect(self._on_load_save)
         self._overlay_action_hotkeys.replace_triggered.connect(self._on_replace_save)
+        self._overlay_action_hotkeys.rename_triggered.connect(self._begin_overlay_rename)
         self._overlay_action_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
         self._overlay_action_hotkeys.next_slot_triggered.connect(self._select_next_slot)
         self._overlay_action_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
@@ -1129,17 +1134,27 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Rename slot", "New name:", text=slot.name)
         if not ok or not name.strip() or name.strip() == slot.name:
             return
+        self._rename_current_slot(name.strip())
+
+    def _rename_current_slot(self, name: str) -> bool:
+        """Rename the selected slot and return whether a rename occurred."""
+        row = self.slot_list.currentRow()
+        if row < 0 or row >= len(self._slots):
+            return False
+        slot = self._slots[row]
         name = name.strip()
+        if not name or name == slot.name:
+            return False
         if (slot.path.parent / name).exists():
             self.status_bar.showMessage(f"A slot named '{name}' already exists.")
-            return
+            return False
         try:
             storage.rename_slot(slot, name)
         except Exception as e:
             logger.exception("Rename slot failed: game=%r profile=%r %r -> %r",
                              slot.game, slot.profile, slot.name, name)
             self.status_bar.showMessage(f"Rename failed: {e}")
-            return
+            return False
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
         # Keep order.json in sync whenever it already exists, so the renamed slot
@@ -1148,6 +1163,35 @@ class MainWindow(QMainWindow):
             storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
         self._reload_slots(name)
         self.status_bar.showMessage(f"Renamed to '{name}'.")
+        return True
+
+    def _begin_overlay_rename(self) -> None:
+        row = self.slot_list.currentRow()
+        if 0 <= row < len(self._slots):
+            current_name = self._slots[row].name
+            self._overlay.begin_rename(current_name)
+            if not self._overlay_rename_input.start(current_name):
+                self._overlay.end_rename()
+                self.status_bar.showMessage("Global keyboard input is unavailable.")
+
+    def _on_overlay_rename_requested(self, name: str) -> None:
+        self._overlay_rename_input.stop()
+        name = name.strip()
+        row = self.slot_list.currentRow()
+        if not name or (0 <= row < len(self._slots) and name == self._slots[row].name):
+            self._overlay.end_rename()
+            return
+        if self._rename_current_slot(name):
+            self._overlay.end_rename()
+            self._refresh_overlay()
+        elif self._overlay.isVisible():
+            # Keep the field open after a validation or filesystem error so the
+            # player can correct the name without returning to the main window.
+            self._overlay_rename_input.start(name)
+
+    def _cancel_overlay_rename(self) -> None:
+        self._overlay_rename_input.stop()
+        self._overlay.end_rename()
 
     def _on_slot_context_menu(self, pos) -> None:
         item = self.slot_list.itemAt(pos)
@@ -1360,6 +1404,7 @@ class MainWindow(QMainWindow):
         self._overlay_action_hotkeys.start(
             cfg.overlay_hotkey_import, cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
             cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot, cfg.overlay_hotkey_prev_slot,
+            hotkey_rename=cfg.overlay_hotkey_rename,
             enabled=True,
         )
 
@@ -1379,6 +1424,8 @@ class MainWindow(QMainWindow):
 
     def _hide_overlay(self) -> None:
         self._overlay_action_hotkeys.stop()
+        self._overlay_rename_input.stop()
+        self._overlay.end_rename()
         self._overlay.hide()
         self._apply_hotkeys()
         self._apply_overlay_toggle_hotkey()
@@ -1395,6 +1442,7 @@ class MainWindow(QMainWindow):
         _add("Import", cfg.overlay_hotkey_import)
         _add("Load", cfg.overlay_hotkey_load)
         _add("Replace", cfg.overlay_hotkey_replace)
+        _add("Rename", cfg.overlay_hotkey_rename)
         _add("Practice", cfg.overlay_hotkey_ro_toggle)
 
         prev_hk = _hotkey_label(cfg.overlay_hotkey_prev_slot)
@@ -1597,6 +1645,7 @@ class MainWindow(QMainWindow):
         self._global_hotkeys.stop()
         self._overlay_toggle_hotkey.stop()
         self._overlay_action_hotkeys.stop()
+        self._overlay_rename_input.stop()
         self._overlay.close()
         self._flush_notes()
         self._flush_video()

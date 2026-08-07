@@ -59,6 +59,7 @@ class SettingsDialog(QDialog):
             overlay_hotkey_import=cfg.overlay_hotkey_import,
             overlay_hotkey_load=cfg.overlay_hotkey_load,
             overlay_hotkey_replace=cfg.overlay_hotkey_replace,
+            overlay_hotkey_rename=cfg.overlay_hotkey_rename,
             overlay_hotkey_ro_toggle=cfg.overlay_hotkey_ro_toggle,
             overlay_hotkey_next_slot=cfg.overlay_hotkey_next_slot,
             overlay_hotkey_prev_slot=cfg.overlay_hotkey_prev_slot,
@@ -75,6 +76,7 @@ class SettingsDialog(QDialog):
             cfg.check_updates_on_startup,
             cfg.hotkey_toggle_overlay, cfg.overlay_hotkey_import,
             cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
+            cfg.overlay_hotkey_rename,
             cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot,
             cfg.overlay_hotkey_prev_slot, cfg.overlay_opacity,
         )
@@ -229,6 +231,7 @@ class SettingsDialog(QDialog):
         self._ov_hk_import = self._make_hotkey_row(overlay_layout, "Import save", self._cfg.overlay_hotkey_import)
         self._ov_hk_load = self._make_hotkey_row(overlay_layout, "Load save", self._cfg.overlay_hotkey_load)
         self._ov_hk_replace = self._make_hotkey_row(overlay_layout, "Replace save", self._cfg.overlay_hotkey_replace)
+        self._ov_hk_rename = self._make_hotkey_row(overlay_layout, "Rename current save", self._cfg.overlay_hotkey_rename)
         self._ov_hk_ro = self._make_hotkey_row(overlay_layout, "Practice Mode", self._cfg.overlay_hotkey_ro_toggle)
         self._ov_hk_next_slot = self._make_hotkey_row(overlay_layout, "Next slot", self._cfg.overlay_hotkey_next_slot)
         self._ov_hk_prev_slot = self._make_hotkey_row(overlay_layout, "Previous slot", self._cfg.overlay_hotkey_prev_slot)
@@ -452,6 +455,7 @@ class SettingsDialog(QDialog):
             self._ov_hk_import.keySequence().toString(),
             self._ov_hk_load.keySequence().toString(),
             self._ov_hk_replace.keySequence().toString(),
+            self._ov_hk_rename.keySequence().toString(),
             self._ov_hk_ro.keySequence().toString(),
             self._ov_hk_next_slot.keySequence().toString(),
             self._ov_hk_prev_slot.keySequence().toString(),
@@ -500,6 +504,7 @@ class SettingsDialog(QDialog):
         self._cfg.overlay_hotkey_import = self._ov_hk_import.keySequence().toString()
         self._cfg.overlay_hotkey_load = self._ov_hk_load.keySequence().toString()
         self._cfg.overlay_hotkey_replace = self._ov_hk_replace.keySequence().toString()
+        self._cfg.overlay_hotkey_rename = self._ov_hk_rename.keySequence().toString()
         self._cfg.overlay_hotkey_ro_toggle = self._ov_hk_ro.keySequence().toString()
         self._cfg.overlay_hotkey_next_slot = self._ov_hk_next_slot.keySequence().toString()
         self._cfg.overlay_hotkey_prev_slot = self._ov_hk_prev_slot.keySequence().toString()

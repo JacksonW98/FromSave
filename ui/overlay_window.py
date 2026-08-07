@@ -1,7 +1,7 @@
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication, QLineEdit
 
 _SLOT_ROWS = 5
 _SLOT_RADIUS = _SLOT_ROWS // 2
@@ -73,6 +73,30 @@ class OverlayWindow(QWidget):
         self._hotkeys_lbl.setStyleSheet("color: #6f6f80; font-size: 9px; background: transparent;")
         self._hotkeys_lbl.setWordWrap(True)
         layout.addWidget(self._hotkeys_lbl)
+
+        self._rename_edit = QLineEdit()
+        self._rename_edit.setPlaceholderText("New save name")
+        self._rename_edit.setStyleSheet(
+            "color: #e8e8ee; background: #25252e; border: 1px solid #626270; "
+            "border-radius: 4px; padding: 4px 6px;"
+        )
+        self._rename_edit.setReadOnly(True)
+        self._rename_edit.hide()
+        layout.addWidget(self._rename_edit)
+
+    def begin_rename(self, current_name: str) -> None:
+        """Show an inline name editor without opening the main window."""
+        self._hotkeys_lbl.hide()
+        self._rename_edit.setText(current_name)
+        self._rename_edit.show()
+        self._rename_edit.selectAll()
+
+    def set_rename_text(self, text: str) -> None:
+        self._rename_edit.setText(text)
+
+    def end_rename(self) -> None:
+        self._rename_edit.hide()
+        self._hotkeys_lbl.show()
 
     def set_opacity(self, value: float) -> None:
         self.setWindowOpacity(max(0.2, min(1.0, value)))
