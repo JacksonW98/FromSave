@@ -25,6 +25,13 @@ class _NoScrollComboBox(QComboBox):
         event.ignore()
 
 
+class _NoScrollSlider(QSlider):
+    """A slider that does not change value when the settings panel scrolls."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None):
         super().__init__(parent)
@@ -208,7 +215,7 @@ class SettingsDialog(QDialog):
         opacity_lbl = QLabel("Opacity")
         opacity_lbl.setFixedWidth(130)
         opacity_row_layout.addWidget(opacity_lbl)
-        self._overlay_opacity_slider = QSlider(Qt.Horizontal)
+        self._overlay_opacity_slider = _NoScrollSlider(Qt.Horizontal)
         self._overlay_opacity_slider.setRange(20, 100)
         self._overlay_opacity_slider.setValue(round(self._cfg.overlay_opacity * 100))
         opacity_row_layout.addWidget(self._overlay_opacity_slider, 1)
