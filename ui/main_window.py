@@ -93,7 +93,9 @@ class MainWindow(QMainWindow):
         self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
         self._overlay_action_hotkeys = GlobalHotkeyListener(self)
         self._overlay_rename_input = GlobalTextInputListener(self)
-        self._overlay = OverlayWindow(on_moved=self._on_overlay_moved, parent=self)
+        # Keep the overlay independent of the main window so minimizing the
+        # manager does not also minimize the always-on-top status panel.
+        self._overlay = OverlayWindow(on_moved=self._on_overlay_moved)
         self._overlay_rename_input.text_changed.connect(self._overlay.set_rename_text)
         self._overlay_rename_input.submitted.connect(self._on_overlay_rename_requested)
         self._overlay_rename_input.cancelled.connect(self._cancel_overlay_rename)
