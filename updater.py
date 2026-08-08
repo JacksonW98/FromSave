@@ -152,9 +152,11 @@ def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) 
     if sys.platform == "win32":
         bat_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.bat"
         cleanup_cmds = "\n".join(f'del /q "{p}" >nul 2>&1\nrmdir /s /q "{p}" >nul 2>&1' for p in cleanup_paths)
+        # /XD excludes the release's bundled saves/ presets so an update never
+        # touches the user's real saves directory.
         bat_contents = f"""@echo off
 timeout /t 3 /nobreak >nul
-robocopy "{staged_dir}" "{app_dir}" /E /R:5 /W:2 >nul
+robocopy "{staged_dir}" "{app_dir}" /E /R:5 /W:2 /XD "{staged_dir / 'saves'}" >nul
 start "" "{app_dir / exe_name}"
 {cleanup_cmds}
 del "%~f0"
@@ -170,9 +172,15 @@ del "%~f0"
     else:
         sh_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.sh"
         cleanup_cmds = "\n".join(f'rm -rf "{p}"' for p in cleanup_paths)
+        # Skip the release's bundled saves/ presets so an update never
+        # touches the user's real saves directory.
         sh_contents = f"""#!/bin/sh
 sleep 3
-cp -a "{staged_dir}/." "{app_dir}/"
+for item in "{staged_dir}"/* "{staged_dir}"/.[!.]* "{staged_dir}"/..?*; do
+    [ -e "$item" ] || continue
+    [ "$(basename "$item")" = "saves" ] && continue
+    cp -a "$item" "{app_dir}/"
+done
 chmod +x "{app_dir / exe_name}"
 "{app_dir / exe_name}" >/dev/null 2>&1 &
 {cleanup_cmds}
