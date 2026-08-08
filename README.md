@@ -64,12 +64,12 @@ saves/
             └── your_save_file
 ```
 
-| Folder | What it becomes in the app |
-|---|---|
-| `<Game Name>` | Must match the game name exactly. Pre-configured games already have folders here. |
-| `<Profile Name>` | The profile that appears in the Profile dropdown |
-| `<Slot Name>` | The name of the save slot |
-| `your_save_file` | Your actual save file, placed directly inside the slot folder |
+| Folder           | What it becomes in the app                                                        |
+|------------------|-----------------------------------------------------------------------------------|
+| `<Game Name>`    | Must match the game name exactly. Pre-configured games already have folders here. |
+| `<Profile Name>` | The profile that appears in the Profile dropdown                                  |
+| `<Slot Name>`    | The name of the save slot                                                         |
+| `your_save_file` | Your actual save file, placed directly inside the slot folder                     |
 
 ### Elden Ring example
 
@@ -136,11 +136,11 @@ Toggle **Run Mode** on before starting a serious run and off when you're done. T
 
 The app creates a few kinds of automatic safety-net backups. They all live inside the `saves` folder next to your named slots, but don't show up in the slot list — they're for manual disaster recovery unless noted otherwise.
 
-| Backup | Location | When it's taken | Kept | Restored automatically? |
-|---|---|---|---|---|
-| Load Save backup | `saves/_backups/<Game Name>/<timestamp>/` | Every time you click **Load Save**, right before the live save is overwritten | Last 3 | No |
-| Practice Mode snapshot | `saves/_practice_start/<Game Name>/` | Once, when Practice Mode is enabled | 1 (overwritten each time you enable it) | Yes, when Practice Mode is disabled |
-| Run Mode backup | `saves/_run_backups/<Game Name>/<timestamp>/` | Every 2 minutes while Run Mode is on | Last 3 | No |
+| Backup                 | Location                                      | When it's taken                                                               | Kept                                    | Restored automatically?             |
+|------------------------|-----------------------------------------------|-------------------------------------------------------------------------------|-----------------------------------------|-------------------------------------|
+| Load Save backup       | `saves/_backups/<Game Name>/<timestamp>/`     | Every time you click **Load Save**, right before the live save is overwritten | Last 3                                  | No                                  |
+| Practice Mode snapshot | `saves/_practice_start/<Game Name>/`          | Once, when Practice Mode is enabled                                           | 1 (overwritten each time you enable it) | Yes, when Practice Mode is disabled |
+| Run Mode backup        | `saves/_run_backups/<Game Name>/<timestamp>/` | Every 2 minutes while Run Mode is on                                          | Last 3                                  | No                                  |
 
 To recover from a `_backups` or `_run_backups` snapshot, open the relevant timestamped folder and copy the save file(s) back to the game's save location by hand.
 
@@ -150,10 +150,12 @@ To recover from a `_backups` or `_run_backups` snapshot, open the relevant times
 
 Under **Settings > Hotkeys** you can bind keys for Import save, Load save, Replace save, Practice Mode, Next slot, and Previous slot.
 
-- By default these only work while the app window is focused.
+- By default, these only work while the app window is focused.
 - Check **Enable global hotkeys** to make them work system-wide, even while tabbed into the game. On macOS this requires granting the app Accessibility permission. On SteamOS/Linux (Wayland), global hotkeys are not currently supported, hotkeys work only while the FromSave window is focused.
 
 A separate **Overlay** can be shown over the game (default hotkey: **Insert**) with its own independent set of hotkeys, active only while the overlay is visible. It's a small, draggable, semi-transparent panel showing the current game, profile, and nearby slots, plus its own opacity slider in Settings.
+
+> **Note:** The overlay will probably not work with games running in exclusive fullscreen mode. If possible, try using **borderless fullscreen/windowed mode** instead.
 
 ---
 
