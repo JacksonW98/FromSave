@@ -1387,10 +1387,31 @@ class MainWindow(QMainWindow):
         _apply_hotkeys() after anything that called _suspend_hotkeys(), so the
         overlay's own hotkeys aren't clobbered by the main window's while it's shown."""
         if self._overlay.isVisible():
-            self._start_overlay_action_hotkeys()
+            self._sync_overlay_focus_hotkeys()
         else:
             self._apply_hotkeys()
         self._apply_overlay_toggle_hotkey()
+
+    def _sync_overlay_focus_hotkeys(self) -> None:
+        """While the overlay is open, keep exactly one action-hotkey set live at a
+        time: the main window's own hotkeys while the manager itself is focused,
+        or the overlay's global hotkeys while focus is elsewhere (typically the
+        game). Both sets default to the same keys (F5/F9/F6/...), and pynput's
+        global listener ignores focus entirely, so running both together would
+        fire an action twice on a single keypress."""
+        if not self._overlay.isVisible():
+            return
+        if self.isActiveWindow():
+            self._overlay_action_hotkeys.stop()
+            self._apply_hotkeys()
+        else:
+            self._stop_main_hotkeys()
+            self._start_overlay_action_hotkeys()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            self._sync_overlay_focus_hotkeys()
 
     def _apply_overlay_toggle_hotkey(self) -> None:
         sc = getattr(self, "_overlay_toggle_shortcut", None)
@@ -1427,12 +1448,11 @@ class MainWindow(QMainWindow):
             self._show_overlay()
 
     def _show_overlay(self) -> None:
-        self._stop_main_hotkeys()
         self._overlay.set_opacity(self._config.overlay_opacity)
         self._overlay.show_at_saved_or_default(self._config.overlay_pos_x, self._config.overlay_pos_y)
         self._overlay.show()
         self._refresh_overlay()
-        self._start_overlay_action_hotkeys()
+        self._sync_overlay_focus_hotkeys()
 
     def _hide_overlay(self) -> None:
         self._overlay_action_hotkeys.stop()
