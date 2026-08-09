@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import sys
 
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox, QApplication, QProgressDialog, QSlider,
 )
 
+import api_server
 import config
 import storage
 import updater
@@ -38,42 +40,9 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(620)
         self.setMaximumHeight(700)
-        self._cfg = config.Config(
-            confirm_delete=cfg.confirm_delete,
-            confirm_replace=cfg.confirm_replace,
-            confirm_lock_slot=cfg.confirm_lock_slot,
-            auto_name_imports=cfg.auto_name_imports,
-            hide_paths=cfg.hide_paths,
-            slot_sort=cfg.slot_sort,
-            slot_sort_desc=cfg.slot_sort_desc,
-            last_game=cfg.last_game,
-            last_profile=cfg.last_profile,
-            last_slot=cfg.last_slot,
-            hotkey_import=cfg.hotkey_import,
-            hotkey_load=cfg.hotkey_load,
-            hotkey_replace=cfg.hotkey_replace,
-            hotkey_ro_toggle=cfg.hotkey_ro_toggle,
-            hotkey_next_slot=cfg.hotkey_next_slot,
-            hotkey_prev_slot=cfg.hotkey_prev_slot,
-            global_hotkeys_enabled=cfg.global_hotkeys_enabled,
-            protect_warning_acknowledged=cfg.protect_warning_acknowledged,
-            soft_delete=cfg.soft_delete,
-            hide_details=cfg.hide_details,
-            window_width=cfg.window_width,
-            window_height=cfg.window_height,
-            check_updates_on_startup=cfg.check_updates_on_startup,
-            hotkey_toggle_overlay=cfg.hotkey_toggle_overlay,
-            overlay_hotkey_import=cfg.overlay_hotkey_import,
-            overlay_hotkey_load=cfg.overlay_hotkey_load,
-            overlay_hotkey_replace=cfg.overlay_hotkey_replace,
-            overlay_hotkey_rename=cfg.overlay_hotkey_rename,
-            overlay_hotkey_ro_toggle=cfg.overlay_hotkey_ro_toggle,
-            overlay_hotkey_next_slot=cfg.overlay_hotkey_next_slot,
-            overlay_hotkey_prev_slot=cfg.overlay_hotkey_prev_slot,
-            overlay_opacity=cfg.overlay_opacity,
-            overlay_pos_x=cfg.overlay_pos_x,
-            overlay_pos_y=cfg.overlay_pos_y,
-        )
+        # Full copy so every field survives the dialog round-trip, including
+        # ones this dialog has no widgets for (e.g. window size, last slot).
+        self._cfg = dataclasses.replace(cfg)
         self._initial_cfg = (
             cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
             cfg.auto_name_imports, cfg.hide_paths, cfg.soft_delete,
@@ -86,6 +55,7 @@ class SettingsDialog(QDialog):
             cfg.overlay_hotkey_rename,
             cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot,
             cfg.overlay_hotkey_prev_slot, cfg.overlay_opacity,
+            cfg.companion_enabled,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -243,6 +213,22 @@ class SettingsDialog(QDialog):
         self._ov_hk_next_slot = self._make_hotkey_row(overlay_layout, "Next slot", self._cfg.overlay_hotkey_next_slot)
         self._ov_hk_prev_slot = self._make_hotkey_row(overlay_layout, "Previous slot", self._cfg.overlay_hotkey_prev_slot)
         layout.addWidget(overlay_box)
+
+        # Companion app
+        companion_box = QGroupBox("Companion app")
+        companion_layout = QVBoxLayout(companion_box)
+        self._companion_enabled = QCheckBox(
+            "Allow the phone companion app to connect over Wi-Fi"
+        )
+        self._companion_enabled.setChecked(self._cfg.companion_enabled)
+        self._companion_enabled.toggled.connect(self._refresh_companion_info)
+        companion_layout.addWidget(self._companion_enabled)
+        self._companion_info = QLabel("")
+        self._companion_info.setStyleSheet("color: #888899;")
+        self._companion_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        companion_layout.addWidget(self._companion_info)
+        self._refresh_companion_info()
+        layout.addWidget(companion_box)
 
         # Game save paths
         paths_box = QGroupBox("Game save paths")
@@ -441,6 +427,19 @@ class SettingsDialog(QDialog):
                     edit.setText(path)
         return handler
 
+    def _refresh_companion_info(self) -> None:
+        if self._companion_enabled.isChecked():
+            if not self._cfg.companion_token:
+                self._cfg.companion_token = api_server.generate_pair_code()
+            self._companion_info.setText(
+                f"In the phone app, connect to  {api_server.local_ip()}:{self._cfg.companion_port}"
+                f"  with pairing code  {self._cfg.companion_token}"
+            )
+        else:
+            self._companion_info.setText(
+                "Enable to show the address and pairing code for the phone app."
+            )
+
     def _has_changes(self) -> bool:
         current_cfg = (
             self._confirm_delete.isChecked(),
@@ -467,6 +466,7 @@ class SettingsDialog(QDialog):
             self._ov_hk_next_slot.keySequence().toString(),
             self._ov_hk_prev_slot.keySequence().toString(),
             self._overlay_opacity_slider.value() / 100.0,
+            self._companion_enabled.isChecked(),
         )
         if current_cfg != self._initial_cfg:
             return True
@@ -515,6 +515,7 @@ class SettingsDialog(QDialog):
         self._cfg.overlay_hotkey_ro_toggle = self._ov_hk_ro.keySequence().toString()
         self._cfg.overlay_hotkey_next_slot = self._ov_hk_next_slot.keySequence().toString()
         self._cfg.overlay_hotkey_prev_slot = self._ov_hk_prev_slot.keySequence().toString()
+        self._cfg.companion_enabled = self._companion_enabled.isChecked()
         self.accept()
 
     @property

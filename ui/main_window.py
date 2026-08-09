@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QProgressDialog, QApplication,
 )
 
+import api_server
 import config
 import storage
 import updater
@@ -100,6 +101,9 @@ class MainWindow(QMainWindow):
         self._overlay_rename_input.submitted.connect(self._on_overlay_rename_requested)
         self._overlay_rename_input.cancelled.connect(self._cancel_overlay_rename)
 
+        self._companion = api_server.CompanionServer(self)
+        self._companion.saves_changed.connect(self._on_remote_saves_changed)
+
         self._startup_updater = updater.UpdateChecker()
         self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
         self._startup_updater.check_failed.connect(self._on_startup_check_failed)
@@ -136,6 +140,7 @@ class MainWindow(QMainWindow):
         self.apply_stylesheet()
         self._apply_hotkeys()
         self._apply_overlay_toggle_hotkey()
+        self._apply_companion_server()
         QTimer.singleShot(0, self._prompt_unconfigured_games)
         if self._config.check_updates_on_startup:
             QTimer.singleShot(0, self._startup_updater.start_check)
@@ -1503,6 +1508,29 @@ class MainWindow(QMainWindow):
         self._config.overlay_pos_y = y
         config.save_config(self._config)
 
+    def _apply_companion_server(self) -> None:
+        if self._config.companion_enabled:
+            if not self._config.companion_token:
+                self._config.companion_token = api_server.generate_pair_code()
+                config.save_config(self._config)
+            started = self._companion.start(
+                self._config.companion_port, self._config.companion_token
+            )
+            if started:
+                self.status_bar.showMessage(
+                    f"Companion app: connect to "
+                    f"{api_server.local_ip()}:{self._config.companion_port}", 6000)
+            else:
+                self.status_bar.showMessage("Companion server failed to start.", 6000)
+        else:
+            self._companion.stop()
+
+    def _on_remote_saves_changed(self) -> None:
+        """A phone loaded or imported a save; refresh what we're showing."""
+        self._reload_slots(self._current_slot.name if self._current_slot else "")
+        self._refresh_overlay()
+        self.status_bar.showMessage("Saves updated from companion app.", 4000)
+
     def _on_open_settings(self) -> None:
         self._suspend_hotkeys()
         prev_game = self.game_combo.currentText()
@@ -1561,6 +1589,7 @@ class MainWindow(QMainWindow):
 
         self._apply_info_panel()
         self._restore_hotkeys()
+        self._apply_companion_server()
         self.status_bar.showMessage("Settings saved.")
 
     def _ro_btn_text(self, is_on: bool) -> str:
@@ -1674,6 +1703,7 @@ class MainWindow(QMainWindow):
                     self.profile_combo.currentText(),
                     self._current_slot.name if self._current_slot else "")
         self._run_backup_timer.stop()
+        self._companion.stop()
         self._global_hotkeys.stop()
         self._overlay_toggle_hotkey.stop()
         self._overlay_action_hotkeys.stop()

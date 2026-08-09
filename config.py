@@ -46,6 +46,9 @@ class Config:
     overlay_opacity: float = 0.85
     overlay_pos_x: int = -1
     overlay_pos_y: int = -1
+    companion_enabled: bool = False
+    companion_port: int = 8765
+    companion_token: str = ""
 
 
 def load_config() -> Config:
@@ -91,6 +94,9 @@ def load_config() -> Config:
             overlay_opacity=data.get("overlay_opacity", 0.85),
             overlay_pos_x=data.get("overlay_pos_x", -1),
             overlay_pos_y=data.get("overlay_pos_y", -1),
+            companion_enabled=data.get("companion_enabled", False),
+            companion_port=data.get("companion_port", 8765),
+            companion_token=data.get("companion_token", ""),
         )
     except (json.JSONDecodeError, OSError):
         logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)
