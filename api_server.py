@@ -17,6 +17,7 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
+import config as config_module
 import storage
 from version import __version__
 
@@ -176,6 +177,19 @@ class _Handler(BaseHTTPRequestHandler):
                         slot.name, game_cfg.name, profile)
             self.on_saves_changed()
             return {"imported": _slot_json(slot)}
+
+        if method == "POST" and path == "/api/delete":
+            body = self._read_body()
+            game_cfg = _find_game(body.get("game") or "")
+            profile = body.get("profile") or ""
+            slot = _find_slot(game_cfg.name, profile, body.get("slot") or "")
+            # Respect the desktop's trash-vs-permanent delete setting.
+            soft = config_module.load_config().soft_delete
+            storage.delete_slot(slot, soft=soft)
+            logger.info("Companion app deleted slot %r (%s / %s, soft=%s)",
+                        slot.name, game_cfg.name, profile, soft)
+            self.on_saves_changed()
+            return {"deleted": slot.name, "trashed": soft}
 
         raise _ApiError(404, f"No such endpoint: {method} {path}")
 
