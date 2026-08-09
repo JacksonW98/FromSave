@@ -68,6 +68,21 @@ def _find_slot(game: str, profile: str, slot_name: str) -> storage.SaveSlot:
 
 _SORT_MODES = ("name", "created", "modified", "custom")
 
+# Windows-invalid filename characters plus path separators; slot names become
+# directory names, so anything from the network must stay a plain name.
+_BAD_NAME_CHARS = set('<>:"/\\|?*') | {chr(c) for c in range(32)}
+
+
+def _validate_slot_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise _ApiError(400, "Name cannot be empty")
+    if len(name) > 120:
+        raise _ApiError(400, "Name is too long")
+    if any(c in _BAD_NAME_CHARS for c in name) or name in (".", "..") or name.endswith("."):
+        raise _ApiError(400, "Name contains characters that are not allowed")
+    return name
+
 
 def _sorted_slots(game: str, profile: str, cfg) -> list[storage.SaveSlot]:
     """Load slots ordered exactly as the desktop's slot list shows them
@@ -202,7 +217,9 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
             profile = body.get("profile") or ""
-            name = (body.get("name") or "").strip() or storage.auto_slot_name(game_cfg.name, profile)
+            raw_name = (body.get("name") or "").strip()
+            name = (_validate_slot_name(raw_name) if raw_name
+                    else storage.auto_slot_name(game_cfg.name, profile))
             slot = storage.import_save(game_cfg.name, profile, name, game_cfg)
             logger.info("Companion app imported slot %r (%s / %s)",
                         slot.name, game_cfg.name, profile)
@@ -240,9 +257,7 @@ class _Handler(BaseHTTPRequestHandler):
             game_cfg = _find_game(body.get("game") or "")
             profile = body.get("profile") or ""
             slot = _find_slot(game_cfg.name, profile, body.get("slot") or "")
-            new_name = (body.get("name") or "").strip()
-            if not new_name:
-                raise _ApiError(400, "Name cannot be empty")
+            new_name = _validate_slot_name(body.get("name") or "")
             if new_name == slot.name:
                 return {"renamed": slot.name}
             if (slot.path.parent / new_name).exists():
