@@ -12,6 +12,7 @@ import secrets
 import socket
 import string
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
@@ -65,6 +66,30 @@ def _find_slot(game: str, profile: str, slot_name: str) -> storage.SaveSlot:
     return slot
 
 
+_SORT_MODES = ("name", "created", "modified", "custom")
+
+
+def _sorted_slots(game: str, profile: str, cfg) -> list[storage.SaveSlot]:
+    """Load slots ordered exactly as the desktop's slot list shows them
+    (mirrors MainWindow._reload_slots)."""
+    slots = storage.load_slots(game, profile)
+    mode, desc = cfg.slot_sort, cfg.slot_sort_desc
+    if mode == "name":
+        slots.sort(key=lambda s: s.name.lower(), reverse=desc)
+    elif mode == "created":
+        slots.sort(key=lambda s: s.date_created or datetime.min, reverse=desc)
+    elif mode == "modified":
+        slots.sort(key=lambda s: s.date_modified or s.date_created or datetime.min,
+                   reverse=desc)
+    elif mode == "custom":
+        order = storage.load_slot_order(game, profile)
+        if order:
+            order_map = {name: i for i, name in enumerate(order)}
+            slots.sort(key=lambda s: order_map.get(s.name, len(order)))
+        storage.save_slot_order(game, profile, [s.name for s in slots])
+    return slots
+
+
 def _slot_json(slot: storage.SaveSlot) -> dict:
     return {
         "name": slot.name,
@@ -79,6 +104,7 @@ class _Handler(BaseHTTPRequestHandler):
     # Set by CompanionServer.start() on the class the server is built with.
     token = ""
     on_saves_changed = staticmethod(lambda: None)
+    on_sort_changed = staticmethod(lambda mode, desc: None)
 
     # -- plumbing ---------------------------------------------------------
 
@@ -155,7 +181,12 @@ class _Handler(BaseHTTPRequestHandler):
             q = self._query()
             game, profile = q.get("game") or "", q.get("profile") or ""
             _find_game(game)
-            return {"slots": [_slot_json(s) for s in storage.load_slots(game, profile)]}
+            cfg = config_module.load_config()
+            return {
+                "slots": [_slot_json(s) for s in _sorted_slots(game, profile, cfg)],
+                "sort": cfg.slot_sort,
+                "desc": cfg.slot_sort_desc,
+            }
 
         if method == "POST" and path == "/api/load":
             body = self._read_body()
@@ -178,6 +209,32 @@ class _Handler(BaseHTTPRequestHandler):
             self.on_saves_changed()
             return {"imported": _slot_json(slot)}
 
+        if method == "POST" and path == "/api/sort":
+            body = self._read_body()
+            mode = body.get("sort")
+            if mode not in _SORT_MODES:
+                raise _ApiError(400, f"Invalid sort mode: {mode}")
+            desc = bool(body.get("desc", True))
+            cfg = config_module.load_config()
+            cfg.slot_sort = mode
+            cfg.slot_sort_desc = desc
+            config_module.save_config(cfg)
+            logger.info("Companion app set slot sort: %s desc=%s", mode, desc)
+            self.on_sort_changed(mode, desc)
+            return {"sort": mode, "desc": desc}
+
+        if method == "POST" and path == "/api/slot_order":
+            body = self._read_body()
+            game_cfg = _find_game(body.get("game") or "")
+            profile = body.get("profile") or ""
+            names = body.get("names")
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                raise _ApiError(400, "names must be a list of slot names")
+            storage.save_slot_order(game_cfg.name, profile, names)
+            logger.info("Companion app reordered slots (%s / %s)", game_cfg.name, profile)
+            self.on_saves_changed()
+            return {"order": names}
+
         if method == "POST" and path == "/api/delete":
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
@@ -198,6 +255,7 @@ class CompanionServer(QObject):
     """Owns the HTTP server thread and bridges remote actions into Qt signals."""
 
     saves_changed = Signal()
+    sort_changed = Signal(str, bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -218,6 +276,7 @@ class CompanionServer(QObject):
         handler = type("BoundHandler", (_Handler,), {
             "token": token,
             "on_saves_changed": staticmethod(self.saves_changed.emit),
+            "on_sort_changed": staticmethod(self.sort_changed.emit),
         })
         try:
             self._httpd = ThreadingHTTPServer(("0.0.0.0", port), handler)

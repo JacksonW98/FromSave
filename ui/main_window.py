@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
 
         self._companion = api_server.CompanionServer(self)
         self._companion.saves_changed.connect(self._on_remote_saves_changed)
+        self._companion.sort_changed.connect(self._on_remote_sort_changed)
 
         self._startup_updater = updater.UpdateChecker()
         self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
@@ -1530,6 +1531,23 @@ class MainWindow(QMainWindow):
         self._reload_slots(self._current_slot.name if self._current_slot else "")
         self._refresh_overlay()
         self.status_bar.showMessage("Saves updated from companion app.", 4000)
+
+    def _on_remote_sort_changed(self, mode: str, desc: bool) -> None:
+        """A phone changed the slot sort; the server already saved it to
+        config on disk. Sync our in-memory config and widgets, then re-sort."""
+        self._config.slot_sort = mode
+        self._config.slot_sort_desc = desc
+        label = {"modified": "Modified", "created": "Created",
+                 "name": "Name", "custom": "Custom"}.get(mode, "Modified")
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.setCurrentText(label)
+        self.sort_combo.blockSignals(False)
+        self.sort_dir_btn.setIcon(
+            self._icon_sort_desc if desc else self._icon_sort_asc
+        )
+        self.sort_dir_btn.setEnabled(mode != "custom")
+        self._reload_slots(self._current_slot.name if self._current_slot else "")
+        self.status_bar.showMessage("Sort changed from companion app.", 4000)
 
     def _on_open_settings(self) -> None:
         self._suspend_hotkeys()
