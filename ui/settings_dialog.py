@@ -2,8 +2,8 @@ import dataclasses
 import os
 import sys
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QGroupBox, QWidget,
@@ -131,6 +131,16 @@ class SettingsDialog(QDialog):
         self._companion_enabled.setChecked(self._cfg.companion_enabled)
         self._companion_enabled.toggled.connect(self._on_companion_toggled)
         companion_layout.addWidget(self._companion_enabled)
+
+        get_app_row = QHBoxLayout()
+        get_app_btn = QPushButton("Get the companion app ↗")
+        get_app_btn.setObjectName("ghostBtn")
+        get_app_btn.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://github.com/JacksonW98/fromsave-companion/releases/latest")
+        ))
+        get_app_row.addWidget(get_app_btn)
+        get_app_row.addStretch()
+        companion_layout.addLayout(get_app_row)
 
         reveal_row = QHBoxLayout()
         self._companion_reveal_btn = QPushButton("Show connection info")
