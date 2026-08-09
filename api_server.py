@@ -235,6 +235,32 @@ class _Handler(BaseHTTPRequestHandler):
             self.on_saves_changed()
             return {"order": names}
 
+        if method == "POST" and path == "/api/rename":
+            body = self._read_body()
+            game_cfg = _find_game(body.get("game") or "")
+            profile = body.get("profile") or ""
+            slot = _find_slot(game_cfg.name, profile, body.get("slot") or "")
+            new_name = (body.get("name") or "").strip()
+            if not new_name:
+                raise _ApiError(400, "Name cannot be empty")
+            if new_name == slot.name:
+                return {"renamed": slot.name}
+            if (slot.path.parent / new_name).exists():
+                raise _ApiError(409, f"A slot named '{new_name}' already exists.")
+            storage.rename_slot(slot, new_name)
+            # Keep order.json in step so the renamed slot holds its position
+            # (mirrors MainWindow._rename_current_slot).
+            order = storage.load_slot_order(game_cfg.name, profile)
+            if order:
+                storage.save_slot_order(
+                    game_cfg.name, profile,
+                    [new_name if n == slot.name else n for n in order],
+                )
+            logger.info("Companion app renamed slot %r -> %r (%s / %s)",
+                        slot.name, new_name, game_cfg.name, profile)
+            self.on_saves_changed()
+            return {"renamed": new_name}
+
         if method == "POST" and path == "/api/delete":
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
