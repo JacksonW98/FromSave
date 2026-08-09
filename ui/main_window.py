@@ -1527,7 +1527,19 @@ class MainWindow(QMainWindow):
             self._companion.stop()
 
     def _on_remote_saves_changed(self) -> None:
-        """A phone loaded or imported a save; refresh what we're showing."""
+        """A phone loaded, imported, or otherwise changed saves/profiles;
+        refresh what we're showing."""
+        game_name = self.game_combo.currentText()
+        if game_name:
+            previous_profile = self.profile_combo.currentText()
+            profiles = storage.load_profiles(game_name)
+            self.profile_combo.blockSignals(True)
+            self.profile_combo.clear()
+            for p in profiles:
+                self.profile_combo.addItem(p)
+            self.profile_combo.blockSignals(False)
+            idx = self.profile_combo.findText(previous_profile)
+            self.profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._reload_slots(self._current_slot.name if self._current_slot else "")
         self._refresh_overlay()
         self.status_bar.showMessage("Saves updated from companion app.", 4000)

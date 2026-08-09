@@ -273,6 +273,17 @@ class _Handler(BaseHTTPRequestHandler):
             self.on_saves_changed()
             return {"order": names}
 
+        if method == "POST" and path == "/api/create_profile":
+            body = self._read_body()
+            game_cfg = _find_game(body.get("game") or "")
+            name = _validate_slot_name(body.get("name") or "")
+            if (storage.SAVES_DIR / game_cfg.name / name).exists():
+                raise _ApiError(409, f"Profile '{name}' already exists.")
+            storage.create_profile(game_cfg.name, name)
+            logger.info("Companion app created profile %r (%s)", name, game_cfg.name)
+            self.on_saves_changed()
+            return {"created": name}
+
         if method == "POST" and path == "/api/rename":
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
