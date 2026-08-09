@@ -49,6 +49,7 @@ class Config:
     companion_enabled: bool = False
     companion_port: int = 8765
     companion_token: str = ""
+    companion_firewall_notice_shown: bool = False
 
 
 def load_config() -> Config:
@@ -97,6 +98,7 @@ def load_config() -> Config:
             companion_enabled=data.get("companion_enabled", False),
             companion_port=data.get("companion_port", 8765),
             companion_token=data.get("companion_token", ""),
+            companion_firewall_notice_shown=data.get("companion_firewall_notice_shown", False),
         )
     except (json.JSONDecodeError, OSError):
         logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)

@@ -36,7 +36,7 @@ class _NoScrollSlider(QSlider):
 
 class SettingsDialog(QDialog):
     def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None,
-                 on_companion_toggle=None):
+                 on_companion_toggle=None, on_companion_notice_shown=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(620)
@@ -46,6 +46,10 @@ class SettingsDialog(QDialog):
         # returns the pairing code. The server is a live service, so making
         # it a deferred form field confused people.
         self._on_companion_toggle = on_companion_toggle
+        # Called once, the first time the checkbox is ever turned on, right
+        # after the firewall heads-up is shown — persisted immediately so it
+        # survives even if the dialog is closed without Save.
+        self._on_companion_notice_shown = on_companion_notice_shown
         self._companion_info_visible = False
         # Full copy so every field survives the dialog round-trip, including
         # ones this dialog has no widgets for (e.g. window size, last slot).
@@ -464,6 +468,17 @@ class SettingsDialog(QDialog):
         """The companion server starts/stops immediately — it's a live
         service, so deferring to the Save button just made the checkbox
         look broken."""
+        if checked and not self._cfg.companion_firewall_notice_shown:
+            QMessageBox.information(
+                self, "Companion app",
+                "Windows may show a popup asking to allow FromSave network access.\n\n"
+                "Make sure you click Allow — if you click Cancel or Deny, the phone "
+                "app won't be able to connect, and you'll need to fix it manually in "
+                "Windows Firewall settings."
+            )
+            self._cfg.companion_firewall_notice_shown = True
+            if self._on_companion_notice_shown is not None:
+                self._on_companion_notice_shown()
         self._cfg.companion_enabled = checked
         if self._on_companion_toggle is not None:
             token = self._on_companion_toggle(checked)

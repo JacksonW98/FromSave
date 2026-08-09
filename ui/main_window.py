@@ -1550,6 +1550,13 @@ class MainWindow(QMainWindow):
         self._apply_companion_server()
         return self._config.companion_token
 
+    def _mark_companion_notice_shown(self) -> None:
+        """Settings-dialog callback: persist that the firewall heads-up has
+        been shown, so it never appears again after the first time — this
+        must survive even if the dialog is then closed without Save."""
+        self._config.companion_firewall_notice_shown = True
+        config.save_config(self._config)
+
     def _apply_companion_server(self) -> None:
         if self._config.companion_enabled:
             if not self._config.companion_token:
@@ -1609,7 +1616,8 @@ class MainWindow(QMainWindow):
 
         self._games = storage.load_games()
         dlg = SettingsDialog(self._config, self._games, self,
-                             on_companion_toggle=self._set_companion_enabled_live)
+                             on_companion_toggle=self._set_companion_enabled_live,
+                             on_companion_notice_shown=self._mark_companion_notice_shown)
         if not dlg.exec():
             self._restore_hotkeys()
             return
