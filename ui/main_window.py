@@ -55,6 +55,25 @@ def _btn_text(base: str, key: str) -> str:
     return f"{base}  ({label})" if label else base
 
 
+def _fix_combo_first_click(combo: QComboBox) -> None:
+    """Select a popup item (and close the popup) on mouse press instead of
+    release.
+
+    With the app's stylesheet applied, the popup's QAbstractItemView is
+    repainted with its styled padding just after it's shown, which can shift
+    item hit-test geometry enough that the very first click after opening
+    registers on the wrong row (or none) — the item only responds correctly
+    from the second click on. Selecting on press sidesteps the stale-release
+    coordinates entirely. Qt's own release-based auto-close no longer has a
+    consistent index to react to once we've already changed it on press, so
+    hidePopup() is called explicitly rather than left to close on its own.
+    """
+    def _select_and_close(index) -> None:
+        combo.setCurrentIndex(index.row())
+        combo.hidePopup()
+    combo.view().pressed.connect(_select_and_close)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -199,6 +218,7 @@ class MainWindow(QMainWindow):
         self.game_combo.setMaximumWidth(320)
         self.game_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.game_combo.currentIndexChanged.connect(self._on_game_changed)
+        _fix_combo_first_click(self.game_combo)
         bar.addWidget(self.game_combo)
 
         bar.addSpacing(12)
@@ -212,6 +232,7 @@ class MainWindow(QMainWindow):
         self.profile_combo.setMaximumWidth(220)
         self.profile_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        _fix_combo_first_click(self.profile_combo)
         bar.addWidget(self.profile_combo)
 
         self.manage_profiles_btn = QPushButton("···")
@@ -253,6 +274,7 @@ class MainWindow(QMainWindow):
         _sort_label = {"modified": "Modified", "created": "Created", "name": "Name", "custom": "Custom"}
         self.sort_combo.setCurrentText(_sort_label.get(self._config.slot_sort, "Modified"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        _fix_combo_first_click(self.sort_combo)
         header.addWidget(self.sort_combo)
 
         _ui_dir = Path(__file__).parent
