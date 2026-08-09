@@ -14,6 +14,7 @@ import string
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -57,6 +58,24 @@ def _find_game(name: str) -> storage.GameConfig:
     if game is None:
         raise _ApiError(404, f"Unknown game: {name}")
     return game
+
+
+def _check_save_path(game_cfg: storage.GameConfig) -> None:
+    """Raise a clear error if this game has no usable save path configured,
+    mirroring MainWindow._validate_game_save_path's checks."""
+    if game_cfg.save_mode == "files":
+        if not game_cfg.save_paths:
+            raise _ApiError(409, f"No save path set for {game_cfg.name}. "
+                                  f"Set it in the desktop app's Settings.")
+        missing = [p for p in game_cfg.save_paths if not Path(p).exists()]
+        if missing:
+            raise _ApiError(409, f"Save file not found on the PC: {missing[0]}")
+        return
+    if not game_cfg.save_path:
+        raise _ApiError(409, f"No save path set for {game_cfg.name}. "
+                              f"Set it in the desktop app's Settings.")
+    if not Path(game_cfg.save_path).exists():
+        raise _ApiError(409, f"Save path not found on the PC: {game_cfg.save_path}")
 
 
 def _find_slot(game: str, profile: str, slot_name: str) -> storage.SaveSlot:
@@ -207,6 +226,7 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
             slot = _find_slot(game_cfg.name, body.get("profile") or "", body.get("slot") or "")
+            _check_save_path(game_cfg)
             storage.load_save(slot, game_cfg)
             logger.info("Companion app loaded slot %r (%s / %s)",
                         slot.name, game_cfg.name, slot.profile)
@@ -217,6 +237,7 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
             profile = body.get("profile") or ""
+            _check_save_path(game_cfg)
             raw_name = (body.get("name") or "").strip()
             name = (_validate_slot_name(raw_name) if raw_name
                     else storage.auto_slot_name(game_cfg.name, profile))
