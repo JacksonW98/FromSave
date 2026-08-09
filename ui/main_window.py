@@ -1509,6 +1509,17 @@ class MainWindow(QMainWindow):
         self._config.overlay_pos_y = y
         config.save_config(self._config)
 
+    def _set_companion_enabled_live(self, enabled: bool) -> str:
+        """Settings-dialog callback: apply the companion checkbox immediately
+        (start/stop the server and persist just this setting) instead of
+        waiting for Save. Returns the pairing code for the dialog to show."""
+        self._config.companion_enabled = enabled
+        if enabled and not self._config.companion_token:
+            self._config.companion_token = api_server.generate_pair_code()
+        config.save_config(self._config)
+        self._apply_companion_server()
+        return self._config.companion_token
+
     def _apply_companion_server(self) -> None:
         if self._config.companion_enabled:
             if not self._config.companion_token:
@@ -1519,8 +1530,7 @@ class MainWindow(QMainWindow):
             )
             if started:
                 self.status_bar.showMessage(
-                    f"Companion app: connect to "
-                    f"{api_server.local_ip()}:{self._config.companion_port}", 6000)
+                    "Companion app enabled — connection info is in Settings.", 6000)
             else:
                 self.status_bar.showMessage("Companion server failed to start.", 6000)
         else:
@@ -1568,7 +1578,8 @@ class MainWindow(QMainWindow):
         prev_slot = self._current_slot.name if self._current_slot else ""
 
         self._games = storage.load_games()
-        dlg = SettingsDialog(self._config, self._games, self)
+        dlg = SettingsDialog(self._config, self._games, self,
+                             on_companion_toggle=self._set_companion_enabled_live)
         if not dlg.exec():
             self._restore_hotkeys()
             return

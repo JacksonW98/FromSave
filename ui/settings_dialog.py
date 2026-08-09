@@ -35,11 +35,18 @@ class _NoScrollSlider(QSlider):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None):
+    def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None,
+                 on_companion_toggle=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(620)
         self.setMaximumHeight(700)
+        # Called with the new enabled state when the companion checkbox is
+        # toggled; applies immediately (unlike the rest of the dialog) and
+        # returns the pairing code. The server is a live service, so making
+        # it a deferred form field confused people.
+        self._on_companion_toggle = on_companion_toggle
+        self._companion_info_visible = False
         # Full copy so every field survives the dialog round-trip, including
         # ones this dialog has no widgets for (e.g. window size, last slot).
         self._cfg = dataclasses.replace(cfg)
@@ -55,7 +62,6 @@ class SettingsDialog(QDialog):
             cfg.overlay_hotkey_rename,
             cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot,
             cfg.overlay_hotkey_prev_slot, cfg.overlay_opacity,
-            cfg.companion_enabled,
         )
         self._initial_games = [
             (g.name, g.save_mode,
@@ -115,6 +121,39 @@ class SettingsDialog(QDialog):
         self._check_updates_on_startup.setChecked(self._cfg.check_updates_on_startup)
         updates_box_layout.addWidget(self._check_updates_on_startup)
         layout.addWidget(updates_box)
+
+        # Companion app
+        companion_box = QGroupBox("Companion app")
+        companion_layout = QVBoxLayout(companion_box)
+        self._companion_enabled = QCheckBox(
+            "Allow the phone companion app to connect over Wi-Fi"
+        )
+        self._companion_enabled.setChecked(self._cfg.companion_enabled)
+        self._companion_enabled.toggled.connect(self._on_companion_toggled)
+        companion_layout.addWidget(self._companion_enabled)
+
+        reveal_row = QHBoxLayout()
+        self._companion_reveal_btn = QPushButton("Show connection info")
+        self._companion_reveal_btn.setObjectName("ghostBtn")
+        self._companion_reveal_btn.clicked.connect(self._on_companion_reveal)
+        reveal_row.addWidget(self._companion_reveal_btn)
+        reveal_row.addStretch()
+        companion_layout.addLayout(reveal_row)
+
+        self._companion_info = QLabel("")
+        self._companion_info.setStyleSheet("color: #888899;")
+        self._companion_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        companion_layout.addWidget(self._companion_info)
+
+        companion_hint = QLabel(
+            "The address and code shown are private to your home network — "
+            "they are not visible to the internet and reveal nothing about you."
+        )
+        companion_hint.setWordWrap(True)
+        companion_hint.setStyleSheet("color: #666677; font-size: 11px;")
+        companion_layout.addWidget(companion_hint)
+        self._refresh_companion_info()
+        layout.addWidget(companion_box)
 
         # Behaviour
         behaviour_box = QGroupBox("Behaviour")
@@ -213,22 +252,6 @@ class SettingsDialog(QDialog):
         self._ov_hk_next_slot = self._make_hotkey_row(overlay_layout, "Next slot", self._cfg.overlay_hotkey_next_slot)
         self._ov_hk_prev_slot = self._make_hotkey_row(overlay_layout, "Previous slot", self._cfg.overlay_hotkey_prev_slot)
         layout.addWidget(overlay_box)
-
-        # Companion app
-        companion_box = QGroupBox("Companion app")
-        companion_layout = QVBoxLayout(companion_box)
-        self._companion_enabled = QCheckBox(
-            "Allow the phone companion app to connect over Wi-Fi"
-        )
-        self._companion_enabled.setChecked(self._cfg.companion_enabled)
-        self._companion_enabled.toggled.connect(self._refresh_companion_info)
-        companion_layout.addWidget(self._companion_enabled)
-        self._companion_info = QLabel("")
-        self._companion_info.setStyleSheet("color: #888899;")
-        self._companion_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        companion_layout.addWidget(self._companion_info)
-        self._refresh_companion_info()
-        layout.addWidget(companion_box)
 
         # Game save paths
         paths_box = QGroupBox("Game save paths")
@@ -427,18 +450,42 @@ class SettingsDialog(QDialog):
                     edit.setText(path)
         return handler
 
+    def _on_companion_toggled(self, checked: bool) -> None:
+        """The companion server starts/stops immediately — it's a live
+        service, so deferring to the Save button just made the checkbox
+        look broken."""
+        self._cfg.companion_enabled = checked
+        if self._on_companion_toggle is not None:
+            token = self._on_companion_toggle(checked)
+            if token:
+                self._cfg.companion_token = token
+        if not checked:
+            self._companion_info_visible = False
+        self._refresh_companion_info()
+
+    def _on_companion_reveal(self) -> None:
+        self._companion_info_visible = not self._companion_info_visible
+        self._refresh_companion_info()
+
     def _refresh_companion_info(self) -> None:
-        if self._companion_enabled.isChecked():
-            if not self._cfg.companion_token:
-                self._cfg.companion_token = api_server.generate_pair_code()
+        enabled = self._companion_enabled.isChecked()
+        self._companion_reveal_btn.setEnabled(enabled)
+        if not enabled:
+            self._companion_reveal_btn.setText("Show connection info")
+            self._companion_info.setVisible(False)
+            return
+        if not self._cfg.companion_token:
+            self._cfg.companion_token = api_server.generate_pair_code()
+        if self._companion_info_visible:
+            self._companion_reveal_btn.setText("Hide connection info")
             self._companion_info.setText(
                 f"In the phone app, connect to  {api_server.local_ip()}:{self._cfg.companion_port}"
                 f"  with pairing code  {self._cfg.companion_token}"
             )
+            self._companion_info.setVisible(True)
         else:
-            self._companion_info.setText(
-                "Enable to show the address and pairing code for the phone app."
-            )
+            self._companion_reveal_btn.setText("Show connection info")
+            self._companion_info.setVisible(False)
 
     def _has_changes(self) -> bool:
         current_cfg = (
@@ -466,7 +513,6 @@ class SettingsDialog(QDialog):
             self._ov_hk_next_slot.keySequence().toString(),
             self._ov_hk_prev_slot.keySequence().toString(),
             self._overlay_opacity_slider.value() / 100.0,
-            self._companion_enabled.isChecked(),
         )
         if current_cfg != self._initial_cfg:
             return True
