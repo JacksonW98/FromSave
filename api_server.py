@@ -23,6 +23,8 @@ from version import __version__
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8765
+DISCOVERY_PORT = 8766
+_DISCOVERY_PROBE = b"FROMSAVE_DISCOVERY_V1"
 
 
 def generate_pair_code() -> str:
@@ -187,6 +189,7 @@ class CompanionServer(QObject):
         super().__init__(parent)
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._udp: Optional[socket.socket] = None
 
     @property
     def running(self) -> bool:
@@ -211,10 +214,53 @@ class CompanionServer(QObject):
 
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
+        self._start_discovery(port)
         logger.info("Companion server listening on %s:%d", local_ip(), port)
         return True
 
+    def _start_discovery(self, http_port: int) -> None:
+        """Answer UDP broadcast probes so the phone app can find this PC
+        without the user typing an IP address."""
+        try:
+            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            udp.bind(("", DISCOVERY_PORT))
+        except OSError as exc:
+            logger.warning("Discovery listener failed to bind port %d: %s",
+                           DISCOVERY_PORT, exc)
+            return
+        self._udp = udp
+        threading.Thread(
+            target=self._discovery_loop, args=(udp, http_port), daemon=True
+        ).start()
+
+    def _discovery_loop(self, udp: socket.socket, http_port: int) -> None:
+        reply = json.dumps({
+            "app": "FromSave Manager",
+            "version": __version__,
+            "host": socket.gethostname(),
+            "port": http_port,
+        }).encode("utf-8")
+        while True:
+            try:
+                data, addr = udp.recvfrom(1024)
+            except OSError:
+                return  # socket closed by stop()
+            if data.strip() != _DISCOVERY_PROBE:
+                continue
+            try:
+                udp.sendto(reply, addr)
+            except OSError:
+                logger.debug("Failed to answer discovery probe from %s", addr)
+
     def stop(self) -> None:
+        if self._udp is not None:
+            udp = self._udp
+            self._udp = None
+            try:
+                udp.close()
+            except OSError:
+                pass
         if self._httpd is not None:
             httpd = self._httpd
             self._httpd = None
