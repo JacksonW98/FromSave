@@ -192,6 +192,31 @@ The game will appear in the dropdown and a folder for it will be created in `sav
 
 ---
 
+## Companion app
+
+The [FromSave Companion](https://github.com/JacksonW98/fromsave-companion) Android app lets you browse, load, import, rename, and delete saves from your phone while the game runs on your PC.
+
+1. Open **Settings > Companion app** and tick **Allow the phone companion app to connect over Wi-Fi**.
+2. Click **Show connection info** for the address and pairing code, and enter them in the phone app (or let it auto-discover the PC on the same network).
+
+Both devices must be on the same Wi-Fi network, and the manager must be running for the phone to connect.
+
+### Windows Firewall prompt
+
+The first time you enable the companion app, Windows will show a popup asking whether to allow FromSave network access, with two buttons. Click **Allow** (not Cancel/Deny) — this only needs to happen once.
+
+If you accidentally click **Cancel** or **Deny**, Windows won't ask again and the phone won't be able to connect. To fix it:
+
+1. Press Start, type **"Allow an app through Windows Firewall"**, and open it.
+2. Click **Change settings** (needs admin).
+3. Find **FromSave** in the list and tick the **Private** checkbox next to it.
+   - If it's not in the list at all, click **Allow another app...** → **Browse...** → select `FromSave.exe` → **Add** → tick **Private**.
+4. Click **OK**.
+
+If FromSave is already listed and allowed but the phone still can't connect, check **Windows Defender Firewall with Advanced Security > Inbound Rules** for a rule blocking FromSave and either delete it or change its action to **Allow the connection**.
+
+---
+
 ## Icon attribution
 
 App icon based on [Floppy disc icons](https://www.flaticon.com/free-icons/floppy-disc) by IYAHICON - Flaticon. Modified from the original.
