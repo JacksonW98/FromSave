@@ -18,6 +18,18 @@ _RESERVED = {"meta.json", "notes.txt"}
 _GAME_CONFIG_FILENAME = "game.json"
 logger = logging.getLogger(__name__)
 
+# Games whose saves/ folder ships pre-created in the release zip (see README's
+# "Supported games" list). They're all single-file saves, so a fresh install
+# can configure them as "file" mode without asking.
+BUNDLED_GAMES = {
+    "Armored Core VI",
+    "Dark Souls II Scholar of the First Sin",
+    "Dark Souls III",
+    "Dark Souls Remastered",
+    "Elden Ring",
+    "Sekiro",
+}
+
 
 def _load_game_json(game_dir: Path) -> dict:
     cfg_file = game_dir / _GAME_CONFIG_FILENAME

@@ -433,23 +433,31 @@ class MainWindow(QMainWindow):
 
     # Data loading
 
+    def _configure_game(self, name: str, mode: str) -> None:
+        game_cfg = storage.GameConfig(name=name, save_path="", save_mode=mode)
+        storage.save_game_config(game_cfg)
+        for g in self._games:
+            if g.name == name:
+                g.save_mode = mode
+                break
+
     def _prompt_unconfigured_games(self) -> None:
         unconfigured = storage.find_unconfigured_games()
         changed = False
         for name in unconfigured:
+            if name in storage.BUNDLED_GAMES:
+                # Pre-created saves/ folder from the release zip — these are
+                # all known single-file games, so skip asking.
+                self._configure_game(name, "file")
+                changed = True
+                self.status_bar.showMessage(
+                    f"'{name}' configured automatically — open Settings to set the save path.", 8000
+                )
+                continue
             dlg = ConfigureGameDialog(name, self)
             if dlg.exec() != QDialog.Accepted:
                 continue
-            game_cfg = storage.GameConfig(
-                name=name,
-                save_path="",
-                save_mode=dlg.result_mode,
-            )
-            storage.save_game_config(game_cfg)
-            for g in self._games:
-                if g.name == name:
-                    g.save_mode = dlg.result_mode
-                    break
+            self._configure_game(name, dlg.result_mode)
             changed = True
             self.status_bar.showMessage(
                 f"'{name}' configured as {dlg.result_mode} — open Settings to set the save path.", 8000
