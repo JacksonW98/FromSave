@@ -87,20 +87,12 @@ def _find_slot(game: str, profile: str, slot_name: str) -> storage.SaveSlot:
 
 _SORT_MODES = ("name", "created", "modified", "custom")
 
-# Windows-invalid filename characters plus path separators; slot names become
-# directory names, so anything from the network must stay a plain name.
-_BAD_NAME_CHARS = set('<>:"/\\|?*') | {chr(c) for c in range(32)}
-
 
 def _validate_slot_name(name: str) -> str:
-    name = name.strip()
-    if not name:
-        raise _ApiError(400, "Name cannot be empty")
-    if len(name) > 120:
-        raise _ApiError(400, "Name is too long")
-    if any(c in _BAD_NAME_CHARS for c in name) or name in (".", "..") or name.endswith("."):
-        raise _ApiError(400, "Name contains characters that are not allowed")
-    return name
+    try:
+        return storage.validate_entry_name(name)
+    except ValueError as e:
+        raise _ApiError(400, str(e))
 
 
 def _sorted_slots(game: str, profile: str, cfg) -> list[storage.SaveSlot]:

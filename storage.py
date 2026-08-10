@@ -31,6 +31,27 @@ BUNDLED_GAMES = {
 }
 
 
+# Windows-invalid filename characters plus path separators and control
+# characters; slot and profile names become directory names, so anything
+# typed for one (main window, overlay, or the phone app) must stay a plain
+# name — otherwise e.g. "a/b" silently nests "b" inside a folder named "a"
+# instead of erroring, since pathlib treats "/" as a separator when joining.
+_BAD_NAME_CHARS = set('<>:"/\\|?*') | {chr(c) for c in range(32)}
+
+
+def validate_entry_name(name: str) -> str:
+    """Validate a slot or profile name typed by a user. Returns the trimmed
+    name, or raises ValueError with a message safe to show as-is."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Name cannot be empty")
+    if len(name) > 120:
+        raise ValueError("Name is too long")
+    if any(c in _BAD_NAME_CHARS for c in name) or name in (".", "..") or name.endswith("."):
+        raise ValueError("Name contains characters that are not allowed")
+    return name
+
+
 def _load_game_json(game_dir: Path) -> dict:
     cfg_file = game_dir / _GAME_CONFIG_FILENAME
     if not cfg_file.exists():

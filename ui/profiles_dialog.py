@@ -72,7 +72,11 @@ class ProfilesDialog(QDialog):
         name, ok = QInputDialog.getText(self, "New profile", "Profile name:")
         if not ok or not name.strip():
             return
-        name = name.strip()
+        try:
+            name = storage.validate_entry_name(name)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid name", str(e))
+            return
         if (storage.SAVES_DIR / self._game / name).exists():
             QMessageBox.warning(self, "Profile exists", f"'{name}' already exists.")
             return
@@ -91,8 +95,14 @@ class ProfilesDialog(QDialog):
         name, ok = QInputDialog.getText(self, "Rename profile", "New name:", text=old_name)
         if not ok or not name.strip() or name.strip() == old_name:
             return
-        name = name.strip()
-        if (storage.SAVES_DIR / self._game / name).exists():
+        try:
+            name = storage.validate_entry_name(name)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid name", str(e))
+            return
+        # On case-insensitive filesystems (Windows, macOS), "main" -> "Main"
+        # would otherwise look like a collision with itself.
+        if name.lower() != old_name.lower() and (storage.SAVES_DIR / self._game / name).exists():
             QMessageBox.warning(self, "Profile exists", f"'{name}' already exists.")
             return
         try:

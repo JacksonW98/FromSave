@@ -1007,7 +1007,11 @@ class MainWindow(QMainWindow):
             name, ok = QInputDialog.getText(self, "Import Save", "Slot name:")
             if not ok or not name.strip():
                 return
-            name = name.strip()
+            try:
+                name = storage.validate_entry_name(name)
+            except ValueError as e:
+                self._notify(str(e))
+                return
         slot_dir = storage.SAVES_DIR / self.game_combo.currentText() / profile / name
         if slot_dir.exists():
             self._notify(f"A slot named '{name}' already exists.")
@@ -1193,6 +1197,11 @@ class MainWindow(QMainWindow):
         name = name.strip()
         if not name or name == slot.name:
             return False
+        try:
+            name = storage.validate_entry_name(name)
+        except ValueError as e:
+            self._notify(str(e))
+            return False
         # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
         # would otherwise look like a collision with itself.
         if name.lower() != slot.name.lower() and (slot.path.parent / name).exists():
@@ -1278,6 +1287,13 @@ class MainWindow(QMainWindow):
         name = name.strip()
         if not name:
             self._finish_overlay_text_entry()
+            return
+        try:
+            name = storage.validate_entry_name(name)
+        except ValueError as e:
+            self._notify(str(e))
+            if self._overlay.isVisible():
+                self._overlay_rename_input.start(name)
             return
         cfg = self._get_game_cfg()
         game_name = self.game_combo.currentText()
