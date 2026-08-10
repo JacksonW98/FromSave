@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
         self._confirm_dialog: Optional[QMessageBox] = None
         self._confirm_action: Optional[str] = None  # "replace" | "delete"
         self._protect_warning_shown: bool = False
+        self._protect_warning_open: bool = False
 
         self._global_hotkeys = GlobalHotkeyListener(self)
         self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
@@ -588,7 +589,16 @@ class MainWindow(QMainWindow):
         # Load slots, restoring last selected slot
         self._reload_slots(self._config.last_slot)
 
+    def _disable_practice_mode_for_context_switch(self) -> None:
+        """Practice Mode guards one game's live save; switching to a
+        different game or profile makes that guard meaningless, so turn it
+        off (this also restores the pre-practice save, same as a normal
+        disable) rather than leaving it silently protecting the old one."""
+        if self.ro_btn.isChecked():
+            self.ro_btn.setChecked(False)  # triggers _on_ro_toggled(False)
+
     def _on_game_changed(self, _: int) -> None:
+        self._disable_practice_mode_for_context_switch()
         game_name = self.game_combo.currentText()
         profiles = storage.load_profiles(game_name)
 
@@ -605,6 +615,7 @@ class MainWindow(QMainWindow):
         self._reload_slots()
 
     def _on_profile_changed(self, _: int) -> None:
+        self._disable_practice_mode_for_context_switch()
         self._reload_slots()
 
     def _on_sort_changed(self, text: str) -> None:
@@ -739,24 +750,30 @@ class MainWindow(QMainWindow):
         self.info_modified.set_value(_fmt_dt(slot.date_modified) if slot.date_modified else "—")
         size = _slot_save_size(slot)
         self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
-        save_files = _slot_save_files(slot)
-        if save_files:
-            is_guarded = (self._guard_slot is not None
-                          and self._guard_slot.path == slot.path)
-            self.info_ro_status.set_value("Active" if is_guarded else "Inactive")
-            self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(is_guarded)
-            self.ro_btn.setText(self._ro_btn_text(is_guarded))
-            self.ro_btn.blockSignals(False)
-            self.ro_btn.setEnabled(not self._run_mode)
-        else:
-            self.info_ro_status.set_value("—")
-            self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(False)
-            self.ro_btn.setText(self._ro_btn_text(False))
-            self.ro_btn.blockSignals(False)
-            self.ro_btn.setEnabled(False)
+        self._maybe_switch_practice_slot(slot)
+        self._sync_ro_button()
         self._refresh_overlay()
+
+    def _maybe_switch_practice_slot(self, slot: storage.SaveSlot) -> None:
+        """If Practice Mode is active and a different slot in the same
+        game/profile was just selected, switch protection to it — the guard
+        should follow whatever save is being viewed, not stay pinned to
+        whichever slot was selected at the moment it was turned on."""
+        if self._guard_slot is None or self._guard_cfg is None:
+            return
+        if self._guard_slot.path == slot.path:
+            return
+        game_cfg = self._get_game_cfg()
+        if not game_cfg or game_cfg.name != self._guard_cfg.name:
+            return  # a genuine game switch disables practice mode separately
+        try:
+            storage.load_save(slot, game_cfg, make_backup=False)
+        except OSError as e:
+            logger.exception("Practice Mode: failed to switch slot: slot=%r", slot.name)
+            self._notify(f"Practice Mode: failed to switch — {e}")
+            return
+        self._guard_slot = slot
+        self._notify(f"Practice mode now protecting '{slot.name}'.")
 
     def _clear_detail(self) -> None:
         self._current_slot = None
@@ -770,12 +787,7 @@ class MainWindow(QMainWindow):
         self.info_created.set_value("—")
         self.info_modified.set_value("—")
         self.info_file_size.set_value("—")
-        self.info_ro_status.set_value("—")
-        self.ro_btn.blockSignals(True)
-        self.ro_btn.setChecked(False)
-        self.ro_btn.setText(self._ro_btn_text(False))
-        self.ro_btn.blockSignals(False)
-        self.ro_btn.setEnabled(False)
+        self._sync_ro_button()
         self._refresh_overlay()
 
     def _on_notes_changed(self) -> None:
@@ -852,58 +864,55 @@ class MainWindow(QMainWindow):
         if self._overlay.isVisible():
             self._overlay.show_message(text)
 
+    _LOCK_CONFIRM_MESSAGE = (
+        "Enable practice mode?\n\nThis will immediately overwrite the game's current save with "
+        "this slot and keep restoring it any time the game tries to save. The game will not be "
+        "able to save progress while practice mode is on."
+    )
+
+    def _sync_ro_button(self) -> None:
+        """Reflect Practice Mode's actual global on/off state on the button
+        and status label, regardless of which slot happens to be selected
+        right now. Enabling locks onto whatever slot was selected at that
+        moment, but the toggle itself isn't tied to what's viewed afterwards
+        — switching slots or games while it's on must not make it look off,
+        and disabling must always be possible from anywhere."""
+        is_active = self._guard_slot is not None
+        save_files = _slot_save_files(self._current_slot) if self._current_slot else []
+        if is_active:
+            self.info_ro_status.set_value("Active")
+        elif save_files:
+            self.info_ro_status.set_value("Inactive")
+        else:
+            self.info_ro_status.set_value("—")
+        self.ro_btn.blockSignals(True)
+        self.ro_btn.setChecked(is_active)
+        self.ro_btn.setText(self._ro_btn_text(is_active))
+        self.ro_btn.blockSignals(False)
+        self.ro_btn.setEnabled(not self._run_mode and (is_active or bool(save_files)))
+
     def _on_ro_toggled(self, checked: bool) -> None:
-        if checked and self._run_mode:
+        if self._confirm_dialog is not None and self._confirm_action == "lock":
+            # A confirm for enabling Practice Mode is already pending — most
+            # likely the global hotkey firing again while it's up, since
+            # dialogs aren't focus-scoped. toggle() already flipped `checked`
+            # to the opposite of the original press, which is not a real
+            # "turn it off" intent, so route this through _confirm() itself
+            # (its own dedup clicks Yes on the pending dialog) and put the
+            # button back to match what that original press will apply.
+            self._confirm("lock", "Practice Mode", self._LOCK_CONFIRM_MESSAGE,
+                          disable_key="confirm_lock_slot")
             self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(False)
+            self.ro_btn.setChecked(True)
             self.ro_btn.blockSignals(False)
-            self._notify("Run mode is on — disable it before using Practice Mode.")
-            return
-        warning_shown = False
-        if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
-            if not self._show_protect_warning():
-                self.ro_btn.blockSignals(True)
-                self.ro_btn.setChecked(False)
-                self.ro_btn.blockSignals(False)
-                return
-            warning_shown = True
-        if checked and not warning_shown and self._config.confirm_lock_slot:
-            if not self._confirm("lock", "Practice Mode",
-                                 "Enable practice mode?\n\nThis will immediately overwrite the game's current save with this slot and keep restoring it any time the game tries to save. The game will not be able to save progress while practice mode is on.",
-                                 disable_key="confirm_lock_slot"):
-                self.ro_btn.blockSignals(True)
-                self.ro_btn.setChecked(False)
-                self.ro_btn.blockSignals(False)
-                return
-        if not self._current_slot:
-            return
-        save_files = _slot_save_files(self._current_slot)
-        if not save_files:
-            return
-        game_cfg = self._get_game_cfg()
-        if not game_cfg:
             return
 
-        if checked:
-            self._guard_slot = self._current_slot
-            self._guard_cfg = game_cfg
-            try:
-                storage.snapshot_practice_start(self._guard_cfg)
-                storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
-            except OSError as e:
-                logger.exception("Practice Mode: failed to apply slot on activate: slot=%r", self._current_slot.name)
-                self._notify(f"Practice Mode: failed to apply — {e}")
-                self._guard_slot = None
-                self._guard_cfg = None
-                self.ro_btn.blockSignals(True)
-                self.ro_btn.setChecked(False)
-                self.ro_btn.blockSignals(False)
-                return
-            live_paths = [str(f) for f in _live_game_files(game_cfg)]
-            if live_paths:
-                self._guard_watcher.addPaths(live_paths)
-        else:
+        if not checked:
+            # Disabling isn't tied to whatever slot/game happens to be
+            # selected right now — it just undoes whatever enabling last
+            # armed, so it must work identically from anywhere.
             guard_cfg = self._guard_cfg
+            guard_slot = self._guard_slot
             self._guard_slot = None
             self._guard_cfg = None
             watched = self._guard_watcher.files()
@@ -914,18 +923,85 @@ class MainWindow(QMainWindow):
                     storage.restore_practice_start(guard_cfg)
                 except OSError as e:
                     logger.exception("Practice Mode: failed to restore pre-practice save: game=%r", guard_cfg.name)
-                    self.ro_btn.setText(self._ro_btn_text(False))
-                    self.info_ro_status.set_value("Inactive")
+                    self._sync_ro_button()
                     self._notify(f"Practice mode off — restore failed: {e}")
                     return
+            self._sync_ro_button()
+            label = guard_slot.name if guard_slot is not None else "save"
+            self._notify(f"'{label}' — practice mode is off — save restored.")
+            return
+
+        # Enabling does need a real selected slot with save files to load.
+        if self._run_mode:
+            self._sync_ro_button()
+            self._notify("Run mode is on — disable it before using Practice Mode.")
+            return
+        warning_shown = False
+        if not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
+            if self._protect_warning_open:
+                # The warning is already up and waiting on a decision (most
+                # likely the global hotkey firing again while it's open,
+                # since it isn't focus-scoped). Unlike _confirm(), this
+                # dialog has no "press again to accept" semantics, so just
+                # undo the reentrant toggle rather than let it desync the
+                # button from what the pending call will actually apply.
+                self.ro_btn.blockSignals(True)
+                self.ro_btn.setChecked(True)
+                self.ro_btn.blockSignals(False)
+                return
+            if self._overlay.isVisible():
+                self._notify("Check the main window — a one-time Practice Mode warning needs your attention.")
+            self._protect_warning_open = True
+            try:
+                confirmed = self._show_protect_warning()
+            finally:
+                self._protect_warning_open = False
+            if not confirmed:
+                self._sync_ro_button()
+                return
+            warning_shown = True
+        if not warning_shown and self._config.confirm_lock_slot:
+            if self._overlay.isVisible() and self._confirm_dialog is None:
+                key = _hotkey_label(self._config.overlay_hotkey_ro_toggle) or _hotkey_label(self._config.hotkey_ro_toggle)
+                self._notify(f"Press {key} again to confirm enabling Practice Mode." if key
+                             else "Trigger Practice Mode again to confirm enabling it.")
+            if not self._confirm("lock", "Practice Mode", self._LOCK_CONFIRM_MESSAGE,
+                                 disable_key="confirm_lock_slot"):
+                self._sync_ro_button()
+                return
+        if not self._current_slot:
+            self._sync_ro_button()
+            self._notify("No slot selected.")
+            return
+        save_files = _slot_save_files(self._current_slot)
+        if not save_files:
+            self._sync_ro_button()
+            return
+        game_cfg = self._get_game_cfg()
+        if not game_cfg:
+            self._sync_ro_button()
+            return
+
+        self._guard_slot = self._current_slot
+        self._guard_cfg = game_cfg
+        try:
+            storage.snapshot_practice_start(self._guard_cfg)
+            storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
+        except OSError as e:
+            logger.exception("Practice Mode: failed to apply slot on activate: slot=%r", self._current_slot.name)
+            self._guard_slot = None
+            self._guard_cfg = None
+            self._sync_ro_button()
+            self._notify(f"Practice Mode: failed to apply — {e}")
+            return
+        live_paths = [str(f) for f in _live_game_files(game_cfg)]
+        if live_paths:
+            self._guard_watcher.addPaths(live_paths)
 
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
-        self.ro_btn.setText(self._ro_btn_text(checked))
-        self.info_ro_status.set_value("Active" if checked else "Inactive")
-        self._notify(
-            f"'{label}' — {'practice mode is on.' if checked else 'practice mode is off — save restored.'}"
-        )
+        self._sync_ro_button()
+        self._notify(f"'{label}' — practice mode is on.")
 
     def _show_protect_warning(self) -> bool:
         """Show the protect-save warning. Returns True if the user confirmed, False if cancelled."""
@@ -1433,8 +1509,8 @@ class MainWindow(QMainWindow):
         self.load_btn.setEnabled(not on)
         if on:
             if self.ro_btn.isChecked():
-                self.ro_btn.setChecked(False)
-            self.ro_btn.setEnabled(False)
+                self.ro_btn.setChecked(False)  # triggers _on_ro_toggled(False), which disables it properly
+            self._sync_ro_button()
             self._run_backup_timer.start()
             self._on_run_backup_tick()
             self.status_bar.showMessage(
@@ -1442,8 +1518,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._run_backup_timer.stop()
-            if self._current_slot and _slot_save_files(self._current_slot):
-                self.ro_btn.setEnabled(True)
+            self._sync_ro_button()
             self.status_bar.showMessage("Run mode off.", 3000)
 
     def _on_run_backup_tick(self) -> None:
