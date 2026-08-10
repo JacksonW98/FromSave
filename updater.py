@@ -23,7 +23,7 @@ from version import __version__
 logger = logging.getLogger(__name__)
 
 REPO = "JacksonW98/fromsave"
-API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+API_URL = f"https://api.github.com/repos/{REPO}/releases"
 ASSET_NAME_WINDOWS = "FromSave.zip"
 ASSET_NAME_LINUX = "FromSave-linux.zip"
 _USER_AGENT = "FromSave-Manager-Updater"
@@ -55,29 +55,41 @@ def is_newer(remote_version: str, local_version: str = __version__) -> bool:
 
 
 def check_latest_release(timeout: float = 10.0) -> Optional[UpdateInfo]:
-    """Return update info if GitHub has a newer release than this build, else None."""
+    """Return update info if GitHub has a newer release than this build, else None.
+
+    notes covers every release between the installed version and the newest,
+    not just the newest one — otherwise updating past several skipped
+    versions at once would hide what changed in the ones in between."""
     req = urllib.request.Request(
-        API_URL,
+        f"{API_URL}?per_page=100",
         headers={"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.load(resp)
+        releases = json.load(resp)
 
-    tag = data.get("tag_name", "")
-    if not tag or not is_newer(tag):
+    # GitHub returns releases newest-first.
+    newer = [r for r in releases if r.get("tag_name") and is_newer(r["tag_name"])]
+    if not newer:
         return None
 
+    latest = newer[0]
+    tag = latest["tag_name"]
+
     asset_name = _asset_name()
-    asset = next((a for a in data.get("assets", []) if a.get("name") == asset_name), None)
+    asset = next((a for a in latest.get("assets", []) if a.get("name") == asset_name), None)
     if asset is None:
         logger.warning("Release %s has no %s asset", tag, asset_name)
         return None
+
+    notes = "\n\n".join(
+        f"{r['tag_name']}\n{(r.get('body') or '').strip()}" for r in newer
+    ).strip()
 
     return UpdateInfo(
         version=tag,
         download_url=asset["browser_download_url"],
         size=asset.get("size", 0),
-        notes=(data.get("body") or "").strip(),
+        notes=notes,
     )
 
 
