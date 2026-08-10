@@ -112,13 +112,17 @@ class MainWindow(QMainWindow):
         self._global_hotkeys = GlobalHotkeyListener(self)
         self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
         self._overlay_action_hotkeys = GlobalHotkeyListener(self)
+        # Shared by both the overlay's rename and import-name prompts (only one
+        # can be active at a time); this says which one submitted/cancelled
+        # should act on.
+        self._overlay_text_mode: str = "rename"  # "rename" | "import"
         self._overlay_rename_input = GlobalTextInputListener(self)
         # Keep the overlay independent of the main window so minimizing the
         # manager does not also minimize the always-on-top status panel.
         self._overlay = OverlayWindow(on_moved=self._on_overlay_moved)
         self._overlay_rename_input.text_changed.connect(self._overlay.set_rename_text)
-        self._overlay_rename_input.submitted.connect(self._on_overlay_rename_requested)
-        self._overlay_rename_input.cancelled.connect(self._cancel_overlay_rename)
+        self._overlay_rename_input.submitted.connect(self._on_overlay_text_submitted)
+        self._overlay_rename_input.cancelled.connect(self._cancel_overlay_text_entry)
 
         self._companion = api_server.CompanionServer(self)
         self._companion.saves_changed.connect(self._on_remote_saves_changed)
@@ -148,7 +152,7 @@ class MainWindow(QMainWindow):
         self._global_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
 
         self._overlay_toggle_hotkey.toggle_overlay_triggered.connect(self._toggle_overlay)
-        self._overlay_action_hotkeys.import_triggered.connect(self._on_import_save)
+        self._overlay_action_hotkeys.import_triggered.connect(self._on_overlay_import_triggered)
         self._overlay_action_hotkeys.load_triggered.connect(self._on_load_save)
         self._overlay_action_hotkeys.replace_triggered.connect(self._on_replace_save)
         self._overlay_action_hotkeys.rename_triggered.connect(self._begin_overlay_rename)
@@ -1203,40 +1207,100 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Renamed to '{name}'.")
         return True
 
+    def _begin_overlay_text_entry(self, initial_text: str) -> bool:
+        """Shared setup for both overlay text prompts: show the inline editor
+        and start the suppressed global listener. Returns whether it started."""
+        self._overlay.begin_rename(initial_text)
+        # The text listener suppresses keystrokes on Windows. Stop the action
+        # listener first so it does not miss the trigger key's release event
+        # and get stuck considering it held down.
+        self._overlay_action_hotkeys.stop()
+        if self._overlay_rename_input.start(initial_text):
+            return True
+        self._overlay.end_rename()
+        self._start_overlay_action_hotkeys()
+        self.status_bar.showMessage("Global keyboard input is unavailable.")
+        return False
+
     def _begin_overlay_rename(self) -> None:
         row = self.slot_list.currentRow()
         if 0 <= row < len(self._slots):
-            current_name = self._slots[row].name
-            self._overlay.begin_rename(current_name)
-            # The text listener suppresses keystrokes on Windows.  Stop the
-            # action listener first so it does not miss F2's key-release event
-            # and get stuck considering F2 held down.
-            self._overlay_action_hotkeys.stop()
-            if not self._overlay_rename_input.start(current_name):
-                self._overlay.end_rename()
-                self._start_overlay_action_hotkeys()
-                self.status_bar.showMessage("Global keyboard input is unavailable.")
+            self._overlay_text_mode = "rename"
+            self._begin_overlay_text_entry(self._slots[row].name)
+
+    def _on_overlay_import_triggered(self) -> None:
+        """Overlay's Import hotkey: skip straight to importing when auto-naming
+        is on (same as the main window), otherwise prompt in the overlay
+        itself rather than popping the main window's dialog."""
+        if self._config.auto_name_imports:
+            self._on_import_save()
+            return
+        cfg = self._get_game_cfg()
+        if not cfg or not self._validate_game_save_path(cfg):
+            return
+        if not self.profile_combo.currentText():
+            self.status_bar.showMessage("No profile selected.")
+            return
+        self._overlay_text_mode = "import"
+        self._begin_overlay_text_entry("")
+
+    def _on_overlay_text_submitted(self, name: str) -> None:
+        if self._overlay_text_mode == "import":
+            self._on_overlay_import_requested(name)
+        else:
+            self._on_overlay_rename_requested(name)
 
     def _on_overlay_rename_requested(self, name: str) -> None:
         self._overlay_rename_input.stop()
         name = name.strip()
         row = self.slot_list.currentRow()
         if not name or (0 <= row < len(self._slots) and name == self._slots[row].name):
-            self._finish_overlay_rename()
+            self._finish_overlay_text_entry()
             return
         if self._rename_current_slot(name):
-            self._finish_overlay_rename()
+            self._finish_overlay_text_entry()
             self._refresh_overlay()
         elif self._overlay.isVisible():
             # Keep the field open after a validation or filesystem error so the
             # player can correct the name without returning to the main window.
             self._overlay_rename_input.start(name)
 
-    def _cancel_overlay_rename(self) -> None:
+    def _on_overlay_import_requested(self, name: str) -> None:
         self._overlay_rename_input.stop()
-        self._finish_overlay_rename()
+        name = name.strip()
+        if not name:
+            self._finish_overlay_text_entry()
+            return
+        cfg = self._get_game_cfg()
+        game_name = self.game_combo.currentText()
+        profile = self.profile_combo.currentText()
+        if not cfg or not profile:
+            self._finish_overlay_text_entry()
+            return
+        slot_dir = storage.SAVES_DIR / game_name / profile / name
+        if slot_dir.exists():
+            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            if self._overlay.isVisible():
+                self._overlay_rename_input.start(name)
+            return
+        try:
+            storage.import_save(game_name, profile, name, cfg)
+        except Exception as e:
+            logger.exception("Import save failed (overlay): game=%r profile=%r slot=%r",
+                             game_name, profile, name)
+            self.status_bar.showMessage(f"Import failed: {e}")
+            self._finish_overlay_text_entry()
+            return
+        self._finish_overlay_text_entry()
+        self._reload_slots(name)
+        self._refresh_overlay()
+        self.status_bar.showMessage(f"Imported '{name}'.")
 
-    def _finish_overlay_rename(self) -> None:
+    def _cancel_overlay_text_entry(self) -> None:
+        self._overlay_rename_input.stop()
+        self._finish_overlay_text_entry()
+
+    def _finish_overlay_text_entry(self) -> None:
         self._overlay.end_rename()
         if self._overlay.isVisible():
             self._start_overlay_action_hotkeys()
@@ -1432,12 +1496,18 @@ class MainWindow(QMainWindow):
         """While the overlay is open, keep exactly one action-hotkey set live at a
         time: the main window's own hotkeys while the manager itself is focused,
         or the overlay's global hotkeys while focus is elsewhere (typically the
-        game). Both sets default to the same keys (F5/F9/F6/...), and pynput's
-        global listener ignores focus entirely, so running both together would
-        fire an action twice on a single keypress."""
+        game, or the manager minimized). Both sets default to the same keys
+        (F5/F9/F6/...), and pynput's global listener ignores focus entirely, so
+        running both together would fire an action twice on a single keypress.
+
+        isMinimized() is checked explicitly because minimizing doesn't always
+        raise ActivationChange on its own — without this, minimizing while the
+        overlay was focused left the main-window hotkeys stuck on, and the
+        overlay's hotkeys never took over."""
         if not self._overlay.isVisible():
             return
-        if self.isActiveWindow():
+        main_focused = self.isActiveWindow() and not self.isMinimized()
+        if main_focused:
             self._overlay_action_hotkeys.stop()
             self._apply_hotkeys()
         else:
@@ -1446,7 +1516,7 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.Type.ActivationChange:
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             self._sync_overlay_focus_hotkeys()
 
     def _apply_overlay_toggle_hotkey(self) -> None:

@@ -11,8 +11,10 @@ logger = logging.getLogger(__name__)
 try:
     from pynput import keyboard as _kb
     _AVAILABLE = True
+    _SHIFT_KEYS = frozenset({_kb.Key.shift, _kb.Key.shift_l, _kb.Key.shift_r})
 except ImportError:
     _AVAILABLE = False
+    _SHIFT_KEYS = frozenset()
     logger.info("pynput is not installed; global hotkeys unavailable")
 #TODO test on windows
 
@@ -190,6 +192,7 @@ class GlobalTextInputListener(QObject):
         self._listener = None
         self._text = ""
         self._replace_on_next_character = False
+        self._shift_held = False
 
     def start(self, initial_text: str) -> bool:
         self.stop()
@@ -198,9 +201,11 @@ class GlobalTextInputListener(QObject):
 
         self._text = initial_text
         self._replace_on_next_character = True
+        self._shift_held = False
         try:
             self._listener = _kb.Listener(
                 on_press=self._on_press,
+                on_release=self._on_release,
                 suppress=sys.platform == "win32",
             )
             self._listener.daemon = True
@@ -224,7 +229,14 @@ class GlobalTextInputListener(QObject):
             except Exception:
                 logger.exception("Failed to stop global text input listener cleanly")
 
+    def _on_release(self, key):
+        if key in _SHIFT_KEYS:
+            self._shift_held = False
+
     def _on_press(self, key):
+        if key in _SHIFT_KEYS:
+            self._shift_held = True
+            return
         if key == _kb.Key.enter:
             self.submitted.emit(self._text)
             return False
@@ -240,8 +252,15 @@ class GlobalTextInputListener(QObject):
             self.text_changed.emit(self._text)
             return
 
-        char = getattr(key, "char", None)
+        # Key.space is a special Key, not a KeyCode, so it has no .char of its
+        # own — without this it was silently swallowed like any other unhandled key.
+        char = " " if key == _kb.Key.space else getattr(key, "char", None)
         if char and char.isprintable():
+            # The low-level suppressed hook doesn't reliably see Shift's state
+            # when translating the character, so letter casing is tracked and
+            # applied ourselves rather than trusting pynput's reported char.
+            if self._shift_held and char.isalpha():
+                char = char.upper()
             self._text = char if self._replace_on_next_character else self._text + char
             self._replace_on_next_character = False
             self.text_changed.emit(self._text)
