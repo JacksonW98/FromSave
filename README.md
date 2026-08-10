@@ -2,6 +2,8 @@
 
 A save slot manager for PC games. Import your current save, load it back at any time, and organize slots into profiles.
 
+<img src="docs/screenshots/main_window.png" alt="FromSave Manager main window" width="700">
+
 ---
 
 ## Supported games
@@ -157,6 +159,15 @@ A separate **Overlay** can be shown over the game (default hotkey: **Insert**) w
 
 > **Note:** The overlay will probably not work with games running in exclusive fullscreen mode. If possible, try using **borderless fullscreen/windowed mode** instead.
 
+<img src="docs/screenshots/overlay_ingame.png" alt="Overlay shown over Elden Ring" width="500">
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/hotkey_settings.png" alt="Hotkey settings" width="380"><br>Settings &gt; Hotkeys</td>
+    <td><img src="docs/screenshots/overlay_settings.png" alt="Overlay settings" width="380"><br>Settings &gt; Overlay</td>
+  </tr>
+</table>
+
 ---
 
 ## Attaching a video to a slot
@@ -190,6 +201,8 @@ FromSave can check GitHub for newer releases and update itself in place.
 
 The game will appear in the dropdown and a folder for it will be created in `saves/` automatically.
 
+<img src="docs/screenshots/game_paths.png" alt="Game save paths in Settings" width="550">
+
 ---
 
 ## Companion app
@@ -200,6 +213,8 @@ The [FromSave Companion](https://github.com/JacksonW98/fromsave-companion) Andro
 2. Click **Show connection info** for the address and pairing code, and enter them in the phone app (or let it auto-discover the PC on the same network).
 
 Both devices must be on the same Wi-Fi network, and the manager must be running for the phone to connect.
+
+<img src="docs/screenshots/settings_companion.png" alt="Companion app settings" width="500">
 
 ### Windows Firewall prompt
 
