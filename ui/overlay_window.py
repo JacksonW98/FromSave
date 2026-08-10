@@ -1,10 +1,14 @@
 from typing import Callable, List, Optional
 
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication, QLineEdit
 
 _SLOT_ROWS = 5
 _SLOT_RADIUS = _SLOT_ROWS // 2
+
+_HOTKEYS_STYLE = "color: #6f6f80; font-size: 9px; background: transparent;"
+_MESSAGE_STYLE = "color: #c9a8ff; font-size: 10px; font-weight: 600; background: transparent;"
+_MESSAGE_DURATION_MS = 2500
 
 
 def _slot_window(total: int, current_row: int, max_count: int = _SLOT_ROWS) -> range:
@@ -46,6 +50,11 @@ class OverlayWindow(QWidget):
         self._on_moved = on_moved
         self._drag_offset = QPoint()
         self._dragging = False
+        self._hotkeys_line = ""
+
+        self._message_timer = QTimer(self)
+        self._message_timer.setSingleShot(True)
+        self._message_timer.timeout.connect(self._clear_message)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -70,7 +79,7 @@ class OverlayWindow(QWidget):
         layout.addStretch()
 
         self._hotkeys_lbl = QLabel("")
-        self._hotkeys_lbl.setStyleSheet("color: #6f6f80; font-size: 9px; background: transparent;")
+        self._hotkeys_lbl.setStyleSheet(_HOTKEYS_STYLE)
         self._hotkeys_lbl.setWordWrap(True)
         layout.addWidget(self._hotkeys_lbl)
 
@@ -101,6 +110,23 @@ class OverlayWindow(QWidget):
     def set_opacity(self, value: float) -> None:
         self.setWindowOpacity(max(0.2, min(1.0, value)))
 
+    def show_message(self, text: str, duration_ms: int = _MESSAGE_DURATION_MS) -> None:
+        """Briefly show feedback for an action (loaded/imported/renamed/etc.)
+        in place of the hotkeys line, since the main window's status bar isn't
+        visible while tabbed into the game with only the overlay showing.
+
+        Safe to call while the rename/import text entry is open (the label is
+        hidden behind it then) — the text is still set immediately, so it's
+        already showing correctly once end_rename() reveals the label again."""
+        self._hotkeys_lbl.setText(text)
+        self._hotkeys_lbl.setStyleSheet(_MESSAGE_STYLE)
+        self._message_timer.start(duration_ms)
+
+    def _clear_message(self) -> None:
+        self._message_timer.stop()
+        self._hotkeys_lbl.setText(self._hotkeys_line)
+        self._hotkeys_lbl.setStyleSheet(_HOTKEYS_STYLE)
+
     def update_content(
         self, game: str, profile: str, slot_names: List[str], current_row: int,
         hotkeys_line: str = "",
@@ -130,7 +156,9 @@ class OverlayWindow(QWidget):
             self._slot_lbls[0].setText("No slot selected")
             self._slot_lbls[0].setStyleSheet("color: #9393a2; font-size: 11px; background: transparent;")
 
-        self._hotkeys_lbl.setText(hotkeys_line)
+        self._hotkeys_line = hotkeys_line
+        if not self._message_timer.isActive():
+            self._hotkeys_lbl.setText(hotkeys_line)
 
     def show_at_saved_or_default(self, pos_x: int, pos_y: int) -> None:
         screen = QApplication.primaryScreen()

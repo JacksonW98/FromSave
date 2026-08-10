@@ -844,12 +844,20 @@ class MainWindow(QMainWindow):
         self._flush_video()
         QTimer.singleShot(0, self._sync_minimum_size)
 
+    def _notify(self, text: str, timeout: int = 0) -> None:
+        """Show a status message, mirrored into the overlay if it's visible —
+        the main window's status bar isn't visible while tabbed into the game
+        with only the overlay showing, so actions there had no feedback."""
+        self.status_bar.showMessage(text, timeout)
+        if self._overlay.isVisible():
+            self._overlay.show_message(text)
+
     def _on_ro_toggled(self, checked: bool) -> None:
         if checked and self._run_mode:
             self.ro_btn.blockSignals(True)
             self.ro_btn.setChecked(False)
             self.ro_btn.blockSignals(False)
-            self.status_bar.showMessage("Run mode is on — disable it before using Practice Mode.")
+            self._notify("Run mode is on — disable it before using Practice Mode.")
             return
         warning_shown = False
         if checked and not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
@@ -884,7 +892,7 @@ class MainWindow(QMainWindow):
                 storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
             except OSError as e:
                 logger.exception("Practice Mode: failed to apply slot on activate: slot=%r", self._current_slot.name)
-                self.status_bar.showMessage(f"Practice Mode: failed to apply — {e}")
+                self._notify(f"Practice Mode: failed to apply — {e}")
                 self._guard_slot = None
                 self._guard_cfg = None
                 self.ro_btn.blockSignals(True)
@@ -908,14 +916,14 @@ class MainWindow(QMainWindow):
                     logger.exception("Practice Mode: failed to restore pre-practice save: game=%r", guard_cfg.name)
                     self.ro_btn.setText(self._ro_btn_text(False))
                     self.info_ro_status.set_value("Inactive")
-                    self.status_bar.showMessage(f"Practice mode off — restore failed: {e}")
+                    self._notify(f"Practice mode off — restore failed: {e}")
                     return
 
         n = len(save_files)
         label = save_files[0].name if n == 1 else f"{n} files"
         self.ro_btn.setText(self._ro_btn_text(checked))
         self.info_ro_status.set_value("Active" if checked else "Inactive")
-        self.status_bar.showMessage(
+        self._notify(
             f"'{label}' — {'practice mode is on.' if checked else 'practice mode is off — save restored.'}"
         )
 
@@ -978,12 +986,10 @@ class MainWindow(QMainWindow):
             return
         try:
             storage.load_save(self._guard_slot, self._guard_cfg, make_backup=False)
-            self.status_bar.showMessage(
-                f"Protected: restored '{self._guard_slot.name}'.", 4000
-            )
+            self._notify(f"Protected: restored '{self._guard_slot.name}'.", 4000)
         except OSError as e:
             logger.exception("Lock restore failed: slot=%r path=%s", self._guard_slot.name, path)
-            self.status_bar.showMessage(f"Lock: restore failed — {e}")
+            self._notify(f"Lock: restore failed — {e}")
         # Re-add after our write is done so the next game save is caught
         self._guard_watcher.addPath(path)
 
@@ -993,7 +999,7 @@ class MainWindow(QMainWindow):
             return
         profile = self.profile_combo.currentText()
         if not profile:
-            self.status_bar.showMessage("No profile selected.")
+            self._notify("No profile selected.")
             return
         if self._config.auto_name_imports:
             name = storage.auto_slot_name(self.game_combo.currentText(), profile)
@@ -1004,17 +1010,17 @@ class MainWindow(QMainWindow):
             name = name.strip()
         slot_dir = storage.SAVES_DIR / self.game_combo.currentText() / profile / name
         if slot_dir.exists():
-            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            self._notify(f"A slot named '{name}' already exists.")
             return
         try:
             storage.import_save(self.game_combo.currentText(), profile, name, cfg)
         except Exception as e:
             logger.exception("Import save failed: game=%r profile=%r slot=%r",
                              self.game_combo.currentText(), profile, name)
-            self.status_bar.showMessage(f"Import failed: {e}")
+            self._notify(f"Import failed: {e}")
             return
         self._reload_slots(name)
-        self.status_bar.showMessage(f"Imported '{name}'.")
+        self._notify(f"Imported '{name}'.")
 
     def _confirm(self, action: str, title: str, message: str,
                  disable_key: Optional[str] = None) -> bool:
@@ -1061,14 +1067,14 @@ class MainWindow(QMainWindow):
     def _on_replace_save(self) -> None:
         row = self.slot_list.currentRow()
         if row < 0 or row >= len(self._slots):
-            self.status_bar.showMessage("No slot selected.")
+            self._notify("No slot selected.")
             return
         cfg = self._get_game_cfg()
         if not cfg or not self._validate_game_save_path(cfg):
             return
         slot = self._slots[row]
         if self._guard_slot is not None and self._guard_slot.path == slot.path:
-            self.status_bar.showMessage(f"'{slot.name}' has practice mode active — disable it before replacing.")
+            self._notify(f"'{slot.name}' has practice mode active — disable it before replacing.")
             return
         if self._config.confirm_replace:
             if not self._confirm("replace", "Replace save",
@@ -1081,18 +1087,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.exception("Replace save failed: game=%r profile=%r slot=%r",
                              slot.game, slot.profile, slot.name)
-            self.status_bar.showMessage(f"Replace failed: {e}")
+            self._notify(f"Replace failed: {e}")
             return
         self._reload_slots(slot_name)
-        self.status_bar.showMessage(f"Replaced '{slot_name}'.")
+        self._notify(f"Replaced '{slot_name}'.")
 
     def _on_load_save(self) -> None:
         if self._run_mode:
-            self.status_bar.showMessage("Run mode is on — disable it before loading a save.")
+            self._notify("Run mode is on — disable it before loading a save.")
             return
         row = self.slot_list.currentRow()
         if row < 0 or row >= len(self._slots):
-            self.status_bar.showMessage("No slot selected.")
+            self._notify("No slot selected.")
             return
         cfg = self._get_game_cfg()
         if not cfg or not self._validate_game_save_path(cfg):
@@ -1103,7 +1109,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.exception("Load save failed: game=%r profile=%r slot=%r",
                              slot.game, slot.profile, slot.name)
-            self.status_bar.showMessage(f"Load failed: {e}")
+            self._notify(f"Load failed: {e}")
             return
 
         # If protection is active, re-point the guard at the newly loaded slot
@@ -1111,7 +1117,7 @@ class MainWindow(QMainWindow):
             self._guard_slot = slot
             # Watcher paths stay the same (same game, same live files)
 
-        self.status_bar.showMessage(f"Loaded '{slot.name}' to game save.")
+        self._notify(f"Loaded '{slot.name}' to game save.")
 
     def _on_delete_slot(self) -> None:
         row = self.slot_list.currentRow()
@@ -1190,14 +1196,14 @@ class MainWindow(QMainWindow):
         # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
         # would otherwise look like a collision with itself.
         if name.lower() != slot.name.lower() and (slot.path.parent / name).exists():
-            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            self._notify(f"A slot named '{name}' already exists.")
             return False
         try:
             storage.rename_slot(slot, name)
         except Exception as e:
             logger.exception("Rename slot failed: game=%r profile=%r %r -> %r",
                              slot.game, slot.profile, slot.name, name)
-            self.status_bar.showMessage(f"Rename failed: {e}")
+            self._notify(f"Rename failed: {e}")
             return False
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
@@ -1206,7 +1212,7 @@ class MainWindow(QMainWindow):
         if self._config.slot_sort == "custom" or storage.load_slot_order(game_name, profile_name):
             storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
         self._reload_slots(name)
-        self.status_bar.showMessage(f"Renamed to '{name}'.")
+        self._notify(f"Renamed to '{name}'.")
         return True
 
     def _begin_overlay_text_entry(self, initial_text: str) -> bool:
@@ -1221,7 +1227,7 @@ class MainWindow(QMainWindow):
             return True
         self._overlay.end_rename()
         self._start_overlay_action_hotkeys()
-        self.status_bar.showMessage("Global keyboard input is unavailable.")
+        self._notify("Global keyboard input is unavailable.")
         return False
 
     def _begin_overlay_rename(self) -> None:
@@ -1241,7 +1247,7 @@ class MainWindow(QMainWindow):
         if not cfg or not self._validate_game_save_path(cfg):
             return
         if not self.profile_combo.currentText():
-            self.status_bar.showMessage("No profile selected.")
+            self._notify("No profile selected.")
             return
         self._overlay_text_mode = "import"
         self._begin_overlay_text_entry("")
@@ -1281,7 +1287,7 @@ class MainWindow(QMainWindow):
             return
         slot_dir = storage.SAVES_DIR / game_name / profile / name
         if slot_dir.exists():
-            self.status_bar.showMessage(f"A slot named '{name}' already exists.")
+            self._notify(f"A slot named '{name}' already exists.")
             if self._overlay.isVisible():
                 self._overlay_rename_input.start(name)
             return
@@ -1290,13 +1296,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.exception("Import save failed (overlay): game=%r profile=%r slot=%r",
                              game_name, profile, name)
-            self.status_bar.showMessage(f"Import failed: {e}")
+            self._notify(f"Import failed: {e}")
             self._finish_overlay_text_entry()
             return
         self._finish_overlay_text_entry()
         self._reload_slots(name)
         self._refresh_overlay()
-        self.status_bar.showMessage(f"Imported '{name}'.")
+        self._notify(f"Imported '{name}'.")
 
     def _cancel_overlay_text_entry(self) -> None:
         self._overlay_rename_input.stop()
@@ -1826,21 +1832,21 @@ class MainWindow(QMainWindow):
     def _validate_game_save_path(self, cfg: storage.GameConfig) -> bool:
         if cfg.save_mode == "files":
             if not cfg.save_paths:
-                self.status_bar.showMessage("No save files configured for this game.")
+                self._notify("No save files configured for this game.")
                 return False
             missing = [p for p in cfg.save_paths if not Path(p).exists()]
             if missing:
                 path_str = "(path hidden)" if self._config.hide_paths else missing[0]
-                self.status_bar.showMessage(f"Save file not found: {path_str}")
+                self._notify(f"Save file not found: {path_str}")
                 return False
             return True
         if not cfg.save_path:
-            self.status_bar.showMessage("Save path is not configured for this game.")
+            self._notify("Save path is not configured for this game.")
             return False
         src = Path(cfg.save_path)
         if not src.exists():
             path_str = "(path hidden)" if self._config.hide_paths else str(src)
-            self.status_bar.showMessage(f"Save path not found: {path_str}")
+            self._notify(f"Save path not found: {path_str}")
             return False
         return True
 
