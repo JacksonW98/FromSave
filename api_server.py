@@ -292,7 +292,9 @@ class _Handler(BaseHTTPRequestHandler):
             new_name = _validate_slot_name(body.get("name") or "")
             if new_name == slot.name:
                 return {"renamed": slot.name}
-            if (slot.path.parent / new_name).exists():
+            # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
+            # would otherwise look like a collision with itself.
+            if new_name.lower() != slot.name.lower() and (slot.path.parent / new_name).exists():
                 raise _ApiError(409, f"A slot named '{new_name}' already exists.")
             storage.rename_slot(slot, new_name)
             # Keep order.json in step so the renamed slot holds its position

@@ -1187,7 +1187,9 @@ class MainWindow(QMainWindow):
         name = name.strip()
         if not name or name == slot.name:
             return False
-        if (slot.path.parent / name).exists():
+        # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
+        # would otherwise look like a collision with itself.
+        if name.lower() != slot.name.lower() and (slot.path.parent / name).exists():
             self.status_bar.showMessage(f"A slot named '{name}' already exists.")
             return False
         try:
