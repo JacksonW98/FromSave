@@ -1,3 +1,4 @@
+import sys
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import Qt, QPoint, QTimer
@@ -36,11 +37,28 @@ class OverlayWindow(QWidget):
 
     def __init__(self, on_moved: Optional[Callable[[int, int], None]] = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
+        if sys.platform.startswith("linux"):
+            # Many Linux window managers hide Qt::Tool windows the moment the
+            # owning app loses focus (a policy meant for things like a
+            # floating toolbox palette), which would hide the overlay the
+            # instant the game is focused — the opposite of what it's for.
+            # A plain Window avoids that WM policy; WindowDoesNotAcceptFocus
+            # keeps it from stealing keyboard focus from the game in Tool's
+            # place (mouse events for dragging still work fine without it).
+            # Trade-off: this window may show up in the taskbar on Linux,
+            # unlike Tool windows.
+            self.setWindowFlags(
+                Qt.WindowType.Window
+                | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+        else:
+            self.setWindowFlags(
+                Qt.WindowType.Tool
+                | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+            )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         self.setFixedSize(260, 222)
         self.setStyleSheet(
