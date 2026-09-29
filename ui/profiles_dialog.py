@@ -100,8 +100,7 @@ class ProfilesDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Invalid name", str(e))
             return
-        # On case-insensitive filesystems (Windows, macOS), "main" -> "Main"
-        # would otherwise look like a collision with itself.
+        # Allow case-only renames on case-insensitive filesystems.
         if name.lower() != old_name.lower() and (storage.SAVES_DIR / self._game / name).exists():
             QMessageBox.warning(self, "Profile exists", f"'{name}' already exists.")
             return
