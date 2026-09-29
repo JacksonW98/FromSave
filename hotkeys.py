@@ -3,6 +3,7 @@ import ctypes.util
 import logging
 import os
 import sys
+from functools import partial
 
 from PySide6.QtCore import QObject, Signal
 
@@ -20,7 +21,7 @@ except ImportError:
 
 
 def _is_trusted() -> bool:
-    """Return True if this process has macOS Accessibility permission (or is not on macOS)."""
+    """Whether this process has macOS Accessibility permission (always True elsewhere)."""
     if sys.platform != "darwin":
         return True
     try:
@@ -32,100 +33,55 @@ def _is_trusted() -> bool:
 
 
 def is_wayland_session() -> bool:
-    """Return True if running on Linux under a Wayland session (e.g. SteamOS Desktop/Gaming Mode).
-
-    pynput's global hotkeys rely on X11 and generally don't receive events under Wayland,
-    so callers use this to show an accurate fallback message instead of a misleading one.
-    """
+    """pynput's global hotkeys rely on X11 and don't receive events under Wayland."""
     return sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
-# Qt's portable QKeySequence names for special keys that don't match pynput's
-# Key enum names when merely lowercased (e.g. "Return" -> "enter", not "return").
+
+# Qt key names whose pynput equivalent isn't just the lowercased name.
 _SPECIAL_KEY_MAP = {
     "ins": "insert",
     "del": "delete",
     "return": "enter",
-    "enter": "enter",
-    "esc": "esc",
-    "backspace": "backspace",
-    "tab": "tab",
-    "home": "home",
-    "end": "end",
     "pgup": "page_up",
     "pgdown": "page_down",
     "capslock": "caps_lock",
     "numlock": "num_lock",
     "scrolllock": "scroll_lock",
     "print": "print_screen",
-    "pause": "pause",
-    "menu": "menu",
-    "space": "space",
 }
 
 
 def _qt_to_pynput(qt_seq: str) -> str | None:
-    """Convert a Qt portable key sequence string (e.g. 'Ctrl+S', 'F5') to pynput GlobalHotKeys format."""
+    """Convert a Qt portable key sequence (e.g. 'Ctrl+S', 'F5') to pynput's hotkey format."""
     if not qt_seq:
         return None
-
-    parts = [p.strip() for p in qt_seq.split("+")]
+    mac = sys.platform == "darwin"
     out = []
-    for p in parts:
-        if p == "Ctrl":
-            # Qt maps Cmd->Ctrl on macOS in its portable format
-            out.append("<cmd>" if sys.platform == "darwin" else "<ctrl>")
-        elif p == "Meta":
-            # Qt's Meta = physical Ctrl on macOS, Win key elsewhere
-            out.append("<ctrl>" if sys.platform == "darwin" else "<cmd>")
-        elif p == "Alt":
-            out.append("<alt>")
-        elif p == "Shift":
-            out.append("<shift>")
-        elif len(p) >= 2 and p[0] == "F" and p[1:].isdigit():
-            out.append(f"<{p.lower()}>")
-        elif p.lower() in _SPECIAL_KEY_MAP:
-            out.append(f"<{_SPECIAL_KEY_MAP[p.lower()]}>")
-        elif len(p) == 1:
-            out.append(p.lower())
+    for part in (p.strip() for p in qt_seq.split("+")):
+        if part == "Ctrl":
+            out.append("<cmd>" if mac else "<ctrl>")  # Qt reports Cmd as Ctrl on macOS
+        elif part == "Meta":
+            out.append("<ctrl>" if mac else "<cmd>")
+        elif len(part) == 1:
+            out.append(part.lower())
         else:
-            out.append(f"<{p.lower()}>")
-
+            name = part.lower()
+            out.append(f"<{_SPECIAL_KEY_MAP.get(name, name)}>")
     return "+".join(out)
 
 
 class GlobalHotkeyListener(QObject):
-    """Listens for system-wide hotkeys and emits Qt signals (safe to connect to GUI slots)."""
+    """Listens for system-wide hotkeys and emits triggered(action) on the Qt thread."""
 
-    import_triggered = Signal()
-    load_triggered = Signal()
-    replace_triggered = Signal()
-    rename_triggered = Signal()
-    ro_toggle_triggered = Signal()
-    next_slot_triggered = Signal()
-    prev_slot_triggered = Signal()
-    toggle_overlay_triggered = Signal()
+    triggered = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._listener = None
 
-    def start(
-        self,
-        hotkey_import: str,
-        hotkey_load: str,
-        hotkey_replace: str,
-        hotkey_ro: str,
-        hotkey_next_slot: str = "",
-        hotkey_prev_slot: str = "",
-        hotkey_rename: str = "",
-        hotkey_toggle_overlay: str = "",
-        enabled: bool = True,
-    ) -> bool:
-        """Start the listener. Returns True if started, False if unavailable, not trusted, or disabled."""
+    def start(self, hotkeys: dict[str, str]) -> bool:
+        """Listen for {action: Qt key sequence}. Returns False if nothing could be started."""
         self.stop()
-        if not enabled:
-            logger.info("Global hotkeys disabled in settings")
-            return False
         if not _AVAILABLE:
             logger.warning("Global hotkeys unavailable because pynput could not be imported")
             return False
@@ -133,26 +89,11 @@ class GlobalHotkeyListener(QObject):
             logger.warning("Global hotkeys unavailable because the process is not trusted")
             return False
 
-        bindings: dict[str, object] = {}
-        if pk := _qt_to_pynput(hotkey_import):
-            bindings[pk] = self.import_triggered.emit
-        if pk := _qt_to_pynput(hotkey_load):
-            bindings[pk] = self.load_triggered.emit
-        if pk := _qt_to_pynput(hotkey_replace):
-            bindings[pk] = self.replace_triggered.emit
-        if pk := _qt_to_pynput(hotkey_rename):
-            bindings[pk] = self.rename_triggered.emit
-        if pk := _qt_to_pynput(hotkey_ro):
-            bindings[pk] = self.ro_toggle_triggered.emit
-        if pk := _qt_to_pynput(hotkey_next_slot):
-            bindings[pk] = self.next_slot_triggered.emit
-        if pk := _qt_to_pynput(hotkey_prev_slot):
-            bindings[pk] = self.prev_slot_triggered.emit
-        if pk := _qt_to_pynput(hotkey_toggle_overlay):
-            bindings[pk] = self.toggle_overlay_triggered.emit
-
+        bindings = {}
+        for action, key in hotkeys.items():
+            if pk := _qt_to_pynput(key):
+                bindings[pk] = partial(self.triggered.emit, action)
         if not bindings:
-            logger.info("No global hotkeys configured")
             return False
 
         try:
@@ -172,15 +113,13 @@ class GlobalHotkeyListener(QObject):
                 self._listener.stop()
             except Exception:
                 logger.exception("Failed to stop global hotkey listener cleanly")
-                pass
             self._listener = None
 
 
 class GlobalTextInputListener(QObject):
-    """Capture a short text entry globally while the overlay is in rename mode.
+    """Capture typed text globally for the overlay's name prompt.
 
-    On Windows the input is suppressed so the game does not also receive the
-    rename keystrokes.
+    On Windows the keystrokes are suppressed so the game doesn't also receive them.
     """
 
     text_changed = Signal(str)
@@ -222,9 +161,8 @@ class GlobalTextInputListener(QObject):
             self._listener = None
             try:
                 listener.stop()
-                # The low-level Windows hook is released asynchronously.  Wait
-                # briefly so a immediately-following overlay hotkey is handled
-                # by GlobalHotKeys instead of being swallowed by this listener.
+                # The Windows hook is released asynchronously; wait briefly so an
+                # immediately following hotkey isn't swallowed by this listener.
                 listener.join(0.25)
             except Exception:
                 logger.exception("Failed to stop global text input listener cleanly")
@@ -252,13 +190,9 @@ class GlobalTextInputListener(QObject):
             self.text_changed.emit(self._text)
             return
 
-        # Key.space is a special Key, not a KeyCode, so it has no .char of its
-        # own — without this it was silently swallowed like any other unhandled key.
         char = " " if key == _kb.Key.space else getattr(key, "char", None)
         if char and char.isprintable():
-            # The low-level suppressed hook doesn't reliably see Shift's state
-            # when translating the character, so letter casing is tracked and
-            # applied ourselves rather than trusting pynput's reported char.
+            # The suppressed hook doesn't reliably apply Shift, so track it ourselves.
             if self._shift_held and char.isalpha():
                 char = char.upper()
             self._text = char if self._replace_on_next_character else self._text + char
