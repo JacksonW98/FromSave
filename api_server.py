@@ -12,10 +12,10 @@ import secrets
 import socket
 import string
 import threading
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from PySide6.QtCore import QObject, Signal
 
@@ -25,7 +25,6 @@ from version import __version__
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PORT = 8765
 DISCOVERY_PORT = 8766
 _DISCOVERY_PROBE = b"FROMSAVE_DISCOVERY_V1"
 
@@ -61,8 +60,7 @@ def _find_game(name: str) -> storage.GameConfig:
 
 
 def _check_save_path(game_cfg: storage.GameConfig) -> None:
-    """Raise a clear error if this game has no usable save path configured,
-    mirroring MainWindow._validate_game_save_path's checks."""
+    """Raise a readable error if the game's save path is unset or missing."""
     if game_cfg.save_mode == "files":
         if not game_cfg.save_paths:
             raise _ApiError(409, f"No save path set for {game_cfg.name}. "
@@ -85,35 +83,11 @@ def _find_slot(game: str, profile: str, slot_name: str) -> storage.SaveSlot:
     return slot
 
 
-_SORT_MODES = ("name", "created", "modified", "custom")
-
-
-def _validate_slot_name(name: str) -> str:
+def _validate_name(name: str) -> str:
     try:
         return storage.validate_entry_name(name)
     except ValueError as e:
         raise _ApiError(400, str(e))
-
-
-def _sorted_slots(game: str, profile: str, cfg) -> list[storage.SaveSlot]:
-    """Load slots ordered exactly as the desktop's slot list shows them
-    (mirrors MainWindow._reload_slots)."""
-    slots = storage.load_slots(game, profile)
-    mode, desc = cfg.slot_sort, cfg.slot_sort_desc
-    if mode == "name":
-        slots.sort(key=lambda s: s.name.lower(), reverse=desc)
-    elif mode == "created":
-        slots.sort(key=lambda s: s.date_created or datetime.min, reverse=desc)
-    elif mode == "modified":
-        slots.sort(key=lambda s: s.date_modified or s.date_created or datetime.min,
-                   reverse=desc)
-    elif mode == "custom":
-        order = storage.load_slot_order(game, profile)
-        if order:
-            order_map = {name: i for i, name in enumerate(order)}
-            slots.sort(key=lambda s: order_map.get(s.name, len(order)))
-        storage.save_slot_order(game, profile, [s.name for s in slots])
-    return slots
 
 
 def _slot_json(slot: storage.SaveSlot) -> dict:
@@ -132,9 +106,7 @@ class _Handler(BaseHTTPRequestHandler):
     on_saves_changed = staticmethod(lambda: None)
     on_sort_changed = staticmethod(lambda mode, desc: None)
 
-    # -- plumbing ---------------------------------------------------------
-
-    def log_message(self, fmt, *args):  # route http.server chatter to our logger
+    def log_message(self, fmt, *args):
         logger.debug("companion http: " + fmt, *args)
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
@@ -162,12 +134,9 @@ class _Handler(BaseHTTPRequestHandler):
             raise _ApiError(400, "Invalid JSON body")
 
     def _query(self) -> dict:
-        from urllib.parse import parse_qs, urlparse
-        parsed = urlparse(self.path)
-        return {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
     def _route(self, method: str) -> None:
-        from urllib.parse import urlparse
         path = urlparse(self.path).path.rstrip("/")
         if not self._check_auth():
             return
@@ -175,7 +144,7 @@ class _Handler(BaseHTTPRequestHandler):
             payload = self._dispatch(method, path)
         except _ApiError as exc:
             self._send_json({"error": exc.message}, exc.status)
-        except Exception as exc:  # storage/filesystem errors -> readable message
+        except Exception as exc:
             logger.exception("Companion API error handling %s %s", method, path)
             self._send_json({"error": str(exc)}, 500)
         else:
@@ -186,8 +155,6 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._route("POST")
-
-    # -- endpoints --------------------------------------------------------
 
     def _dispatch(self, method: str, path: str) -> dict:
         if method == "GET" and path == "/api/ping":
@@ -208,8 +175,9 @@ class _Handler(BaseHTTPRequestHandler):
             game, profile = q.get("game") or "", q.get("profile") or ""
             _find_game(game)
             cfg = config_module.load_config()
+            slots = storage.load_sorted_slots(game, profile, cfg.slot_sort, cfg.slot_sort_desc)
             return {
-                "slots": [_slot_json(s) for s in _sorted_slots(game, profile, cfg)],
+                "slots": [_slot_json(s) for s in slots],
                 "sort": cfg.slot_sort,
                 "desc": cfg.slot_sort_desc,
             }
@@ -231,7 +199,7 @@ class _Handler(BaseHTTPRequestHandler):
             profile = body.get("profile") or ""
             _check_save_path(game_cfg)
             raw_name = (body.get("name") or "").strip()
-            name = (_validate_slot_name(raw_name) if raw_name
+            name = (_validate_name(raw_name) if raw_name
                     else storage.auto_slot_name(game_cfg.name, profile))
             slot = storage.import_save(game_cfg.name, profile, name, game_cfg)
             logger.info("Companion app imported slot %r (%s / %s)",
@@ -242,7 +210,7 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/sort":
             body = self._read_body()
             mode = body.get("sort")
-            if mode not in _SORT_MODES:
+            if mode not in storage.SORT_MODES:
                 raise _ApiError(400, f"Invalid sort mode: {mode}")
             desc = bool(body.get("desc", True))
             cfg = config_module.load_config()
@@ -268,7 +236,7 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/create_profile":
             body = self._read_body()
             game_cfg = _find_game(body.get("game") or "")
-            name = _validate_slot_name(body.get("name") or "")
+            name = _validate_name(body.get("name") or "")
             if (storage.SAVES_DIR / game_cfg.name / name).exists():
                 raise _ApiError(409, f"Profile '{name}' already exists.")
             storage.create_profile(game_cfg.name, name)
@@ -281,16 +249,14 @@ class _Handler(BaseHTTPRequestHandler):
             game_cfg = _find_game(body.get("game") or "")
             profile = body.get("profile") or ""
             slot = _find_slot(game_cfg.name, profile, body.get("slot") or "")
-            new_name = _validate_slot_name(body.get("name") or "")
+            new_name = _validate_name(body.get("name") or "")
             if new_name == slot.name:
                 return {"renamed": slot.name}
-            # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
-            # would otherwise look like a collision with itself.
+            # Allow case-only renames on case-insensitive filesystems.
             if new_name.lower() != slot.name.lower() and (slot.path.parent / new_name).exists():
                 raise _ApiError(409, f"A slot named '{new_name}' already exists.")
             storage.rename_slot(slot, new_name)
-            # Keep order.json in step so the renamed slot holds its position
-            # (mirrors MainWindow._rename_current_slot).
+            # Keep the renamed slot's position in a custom order.
             order = storage.load_slot_order(game_cfg.name, profile)
             if order:
                 storage.save_slot_order(
@@ -307,7 +273,6 @@ class _Handler(BaseHTTPRequestHandler):
             game_cfg = _find_game(body.get("game") or "")
             profile = body.get("profile") or ""
             slot = _find_slot(game_cfg.name, profile, body.get("slot") or "")
-            # Respect the desktop's trash-vs-permanent delete setting.
             soft = config_module.load_config().soft_delete
             storage.delete_slot(slot, soft=soft)
             logger.info("Companion app deleted slot %r (%s / %s, soft=%s)",
@@ -385,7 +350,7 @@ class CompanionServer(QObject):
             try:
                 data, addr = udp.recvfrom(1024)
             except OSError:
-                return  # socket closed by stop()
+                return  # closed by stop()
             if data.strip() != _DISCOVERY_PROBE:
                 continue
             try:
