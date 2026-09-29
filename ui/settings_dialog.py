@@ -1,95 +1,109 @@
 import dataclasses
-import os
-import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
-    QPushButton, QLineEdit, QGroupBox, QWidget,
-    QRadioButton, QFileDialog, QMessageBox, QKeySequenceEdit, QScrollArea,
-    QComboBox, QApplication, QProgressDialog, QSlider,
+    QCheckBox, QComboBox, QDialog, QFrame, QGroupBox, QHBoxLayout, QKeySequenceEdit, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QVBoxLayout,
+    QWidget,
 )
 
 import api_server
 import config
 import storage
-import updater
 from ui.add_game_dialog import AddGameDialog
+from ui.save_path_widgets import browse_save_path, set_path_input_mode, split_paths
+from ui.update_flow import UpdateFlow
 from version import __version__
+
+_MAIN_HOTKEYS = (
+    ("hotkey_import", "Import save"),
+    ("hotkey_load", "Load save"),
+    ("hotkey_replace", "Replace save"),
+    ("hotkey_ro_toggle", "Practice Mode"),
+    ("hotkey_next_slot", "Next slot"),
+    ("hotkey_prev_slot", "Previous slot"),
+)
+
+_OVERLAY_HOTKEYS = (
+    ("overlay_hotkey_import", "Import save"),
+    ("overlay_hotkey_load", "Load save"),
+    ("overlay_hotkey_replace", "Replace save"),
+    ("overlay_hotkey_rename", "Rename current save"),
+    ("overlay_hotkey_ro_toggle", "Practice Mode"),
+    ("overlay_hotkey_next_slot", "Next slot"),
+    ("overlay_hotkey_prev_slot", "Previous slot"),
+)
 
 
 class _NoScrollComboBox(QComboBox):
-    """A QComboBox that ignores mouse wheel events so scrolling the settings
-    panel doesn't accidentally change the selected value."""
+    """Ignores the mouse wheel so scrolling the settings panel can't change it."""
 
     def wheelEvent(self, event) -> None:
         event.ignore()
 
 
 class _NoScrollSlider(QSlider):
-    """A slider that does not change value when the settings panel scrolls."""
+    """Ignores the mouse wheel so scrolling the settings panel can't change it."""
 
     def wheelEvent(self, event) -> None:
         event.ignore()
 
 
+@dataclass
+class _GameRow:
+    name: str
+    mode: str
+    widget: QWidget
+    mode_combo: QComboBox
+    edit: QLineEdit
+    browse_btn: QPushButton
+    reveal_btn: QPushButton
+
+    def to_config(self) -> storage.GameConfig:
+        if self.mode == "files":
+            return storage.GameConfig(self.name, "", "files", split_paths(self.edit.text()))
+        return storage.GameConfig(self.name, self.edit.text().strip(), self.mode)
+
+
 class SettingsDialog(QDialog):
+    """Edits a copy of the config and game list; read the results after exec().
+
+    The companion checkbox is the exception: it applies immediately through
+    on_companion_toggle (which returns the pairing code), since it controls a live server.
+    """
+
     def __init__(self, cfg: config.Config, games: list[storage.GameConfig], parent=None,
                  on_companion_toggle=None, on_companion_notice_shown=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(620)
         self.setMaximumHeight(700)
-        # Called with the new enabled state when the companion checkbox is
-        # toggled; applies immediately (unlike the rest of the dialog) and
-        # returns the pairing code. The server is a live service, so making
-        # it a deferred form field confused people.
         self._on_companion_toggle = on_companion_toggle
-        # Called once, the first time the checkbox is ever turned on, right
-        # after the firewall heads-up is shown — persisted immediately so it
-        # survives even if the dialog is closed without Save.
         self._on_companion_notice_shown = on_companion_notice_shown
         self._companion_info_visible = False
-        # Full copy so every field survives the dialog round-trip, including
-        # ones this dialog has no widgets for (e.g. window size, last slot).
         self._cfg = dataclasses.replace(cfg)
-        self._initial_cfg = (
-            cfg.confirm_delete, cfg.confirm_replace, cfg.confirm_lock_slot,
-            cfg.auto_name_imports, cfg.hide_paths, cfg.soft_delete,
-            cfg.hide_details, cfg.hotkey_import, cfg.hotkey_load,
-            cfg.hotkey_replace, cfg.hotkey_ro_toggle, cfg.hotkey_next_slot,
-            cfg.hotkey_prev_slot, cfg.global_hotkeys_enabled,
-            cfg.check_updates_on_startup,
-            cfg.hotkey_toggle_overlay, cfg.overlay_hotkey_import,
-            cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
-            cfg.overlay_hotkey_rename,
-            cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot,
-            cfg.overlay_hotkey_prev_slot, cfg.overlay_opacity,
-        )
-        self._initial_games = [
-            (g.name, g.save_mode,
-             g.save_path if g.save_mode != "files" else "",
-             tuple(g.save_paths) if g.save_mode == "files" else ())
-            for g in games
-        ]
-        self._game_entries: list[dict] = []
+        self._checkboxes: dict[str, QCheckBox] = {}
+        self._hotkey_edits: dict[str, QKeySequenceEdit] = {}
+        self._game_rows: list[_GameRow] = []
         self._removed_game_names: list[str] = []
-        self._updater = updater.UpdateChecker()
-        self._updater.check_succeeded.connect(self._on_check_succeeded)
-        self._updater.check_failed.connect(self._on_check_failed)
-        self._updater.download_progress.connect(self._on_download_progress)
-        self._updater.download_ready.connect(self._on_download_ready)
-        self._updater.download_failed.connect(self._on_download_failed)
-        self._update_progress_dlg: QProgressDialog | None = None
+
         self._build_ui()
+        self._update_flow = UpdateFlow(self)
+        self._update_flow.status_changed.connect(self._update_status_lbl.setText)
+        self._update_flow.finished.connect(lambda: self._check_updates_btn.setEnabled(True))
         for game in games:
-            self._add_game_row(game.name, game.save_mode, game.save_path, game.save_paths)
+            self._add_game_row(game.name, game.save_mode,
+                               "; ".join(game.save_paths) if game.save_mode == "files" else game.save_path)
         self._apply_path_hide()
-        ui_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
-        qss_path = os.path.join(ui_dir, "settings_dialog.qss")
-        with open(qss_path, "r") as f:
-            self.setStyleSheet(f.read().replace("{ui_dir}", ui_dir))
+        self._initial_values = self._form_values()
+        self._initial_games = self.result_games
+
+        ui_dir = Path(__file__).resolve().parent
+        qss = (ui_dir / "settings_dialog.qss").read_text()
+        self.setStyleSheet(qss.replace("{ui_dir}", ui_dir.as_posix()))
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -107,186 +121,59 @@ class SettingsDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(16, 16, 16, 12)
 
-        # Updates
-        updates_box = QGroupBox("Updates")
-        updates_box_layout = QVBoxLayout(updates_box)
-        updates_row = QHBoxLayout()
-        version_lbl = QLabel(f"Version {__version__}")
-        updates_row.addWidget(version_lbl)
-        self._update_status_lbl = QLabel("")
-        self._update_status_lbl.setStyleSheet("color: #888899;")
-        updates_row.addWidget(self._update_status_lbl, 1)
-        self._check_updates_btn = QPushButton("Check for Updates")
-        self._check_updates_btn.setObjectName("ghostBtn")
-        self._check_updates_btn.clicked.connect(self._on_check_updates)
-        updates_row.addWidget(self._check_updates_btn)
-        updates_box_layout.addLayout(updates_row)
-        self._check_updates_on_startup = QCheckBox("Automatically check for updates when opening")
-        self._check_updates_on_startup.setChecked(self._cfg.check_updates_on_startup)
-        updates_box_layout.addWidget(self._check_updates_on_startup)
-        layout.addWidget(updates_box)
+        layout.addWidget(self._build_updates_box())
+        layout.addWidget(self._build_companion_box())
 
-        # Companion app
-        companion_box = QGroupBox("Companion app")
-        companion_layout = QVBoxLayout(companion_box)
-        self._companion_enabled = QCheckBox(
-            "Allow the phone companion app to connect over Wi-Fi"
-        )
-        self._companion_enabled.setChecked(self._cfg.companion_enabled)
-        self._companion_enabled.toggled.connect(self._on_companion_toggled)
-        companion_layout.addWidget(self._companion_enabled)
-
-        get_app_row = QHBoxLayout()
-        get_app_btn = QPushButton("Get the companion app ↗")
-        get_app_btn.setObjectName("ghostBtn")
-        get_app_btn.clicked.connect(lambda: QDesktopServices.openUrl(
-            QUrl("https://github.com/JacksonW98/fromsave-companion/releases/latest")
-        ))
-        get_app_row.addWidget(get_app_btn)
-        get_app_row.addStretch()
-        companion_layout.addLayout(get_app_row)
-
-        reveal_row = QHBoxLayout()
-        self._companion_reveal_btn = QPushButton("Show connection info")
-        self._companion_reveal_btn.setObjectName("ghostBtn")
-        self._companion_reveal_btn.clicked.connect(self._on_companion_reveal)
-        reveal_row.addWidget(self._companion_reveal_btn)
-        reveal_row.addStretch()
-        companion_layout.addLayout(reveal_row)
-
-        self._companion_info = QLabel("")
-        self._companion_info.setStyleSheet("color: #888899;")
-        self._companion_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        companion_layout.addWidget(self._companion_info)
-
-        companion_hint = QLabel(
-            "The address and code shown are private to your home network — "
-            "they are not visible to the internet and reveal nothing about you."
-        )
-        companion_hint.setWordWrap(True)
-        companion_hint.setStyleSheet("color: #666677; font-size: 11px;")
-        companion_layout.addWidget(companion_hint)
-        self._refresh_companion_info()
-        layout.addWidget(companion_box)
-
-        # Behaviour
         behaviour_box = QGroupBox("Behaviour")
         behaviour_layout = QVBoxLayout(behaviour_box)
-        self._confirm_replace = QCheckBox("Confirm before replacing a save")
-        self._confirm_replace.setChecked(self._cfg.confirm_replace)
-        self._confirm_delete = QCheckBox("Confirm before deleting a save")
-        self._confirm_delete.setChecked(self._cfg.confirm_delete)
-        self._confirm_lock_slot = QCheckBox("Confirm before enabling practice mode")
-        self._confirm_lock_slot.setChecked(self._cfg.confirm_lock_slot)
-        self._soft_delete = QCheckBox("Send deleted saves to the system trash instead of permanently deleting")
-        self._soft_delete.setChecked(self._cfg.soft_delete)
-        self._hide_details = QCheckBox("Hide details panel  (slot name, notes, and game info)")
-        self._hide_details.setChecked(self._cfg.hide_details)
-        self._hide_paths = QCheckBox("Hide file paths")
-        self._hide_paths.setChecked(self._cfg.hide_paths)
-        self._hide_paths.toggled.connect(self._apply_path_hide)
-        behaviour_layout.addWidget(self._confirm_replace)
-        behaviour_layout.addWidget(self._confirm_delete)
-        behaviour_layout.addWidget(self._confirm_lock_slot)
-        behaviour_layout.addWidget(self._soft_delete)
-        behaviour_layout.addWidget(self._hide_details)
-        behaviour_layout.addWidget(self._hide_paths)
-
+        self._add_checkbox(behaviour_layout, "confirm_replace", "Confirm before replacing a save")
+        self._add_checkbox(behaviour_layout, "confirm_delete", "Confirm before deleting a save")
+        self._add_checkbox(behaviour_layout, "confirm_lock_slot", "Confirm before enabling practice mode")
+        self._add_checkbox(behaviour_layout, "soft_delete",
+                           "Send deleted saves to the system trash instead of permanently deleting")
+        self._add_checkbox(behaviour_layout, "hide_details",
+                           "Hide details panel  (slot name, notes, and game info)")
+        self._add_checkbox(behaviour_layout, "hide_paths", "Hide file paths").toggled.connect(
+            self._apply_path_hide
+        )
         layout.addWidget(behaviour_box)
 
-        # Import naming
         naming_box = QGroupBox("Import naming")
         naming_layout = QVBoxLayout(naming_box)
         naming_layout.setSpacing(10)
-        self._prompt_name = QRadioButton("Always prompt for a name")
+        prompt_name = QRadioButton("Always prompt for a name")
         self._auto_name = QRadioButton('Auto-name  (e.g. "new save", "new save 2"…)')
-        if self._cfg.auto_name_imports:
-            self._auto_name.setChecked(True)
-        else:
-            self._prompt_name.setChecked(True)
-        naming_layout.addWidget(self._prompt_name)
+        (self._auto_name if self._cfg.auto_name_imports else prompt_name).setChecked(True)
+        naming_layout.addWidget(prompt_name)
         naming_layout.addWidget(self._auto_name)
         layout.addWidget(naming_box)
 
-        # Hotkeys
         hotkeys_box = QGroupBox("Hotkeys")
         hotkeys_layout = QVBoxLayout(hotkeys_box)
         hotkeys_layout.setSpacing(6)
-
-        self._global_hotkeys_enabled = QCheckBox("Enable global hotkeys (work while the app is in the background)")
-        self._global_hotkeys_enabled.setChecked(self._cfg.global_hotkeys_enabled)
-        hotkeys_layout.addWidget(self._global_hotkeys_enabled)
-
-        self._hk_import = self._make_hotkey_row(hotkeys_layout, "Import save", self._cfg.hotkey_import)
-        self._hk_load = self._make_hotkey_row(hotkeys_layout, "Load save", self._cfg.hotkey_load)
-        self._hk_replace = self._make_hotkey_row(hotkeys_layout, "Replace save", self._cfg.hotkey_replace)
-        self._hk_ro = self._make_hotkey_row(hotkeys_layout, "Practice Mode", self._cfg.hotkey_ro_toggle)
-        self._hk_next_slot = self._make_hotkey_row(hotkeys_layout, "Next slot", self._cfg.hotkey_next_slot)
-        self._hk_prev_slot = self._make_hotkey_row(hotkeys_layout, "Previous slot", self._cfg.hotkey_prev_slot)
+        self._add_checkbox(hotkeys_layout, "global_hotkeys_enabled",
+                           "Enable global hotkeys (work while the app is in the background)")
+        for field, label in _MAIN_HOTKEYS:
+            self._add_hotkey_row(hotkeys_layout, field, label)
         layout.addWidget(hotkeys_box)
 
-        # Overlay
-        overlay_box = QGroupBox("Overlay")
-        overlay_layout = QVBoxLayout(overlay_box)
-        overlay_layout.setSpacing(6)
+        layout.addWidget(self._build_overlay_box())
 
-        opacity_row = QWidget()
-        opacity_row.setStyleSheet("background: transparent;")
-        opacity_row_layout = QHBoxLayout(opacity_row)
-        opacity_row_layout.setContentsMargins(0, 0, 0, 0)
-        opacity_row_layout.setSpacing(8)
-        opacity_lbl = QLabel("Opacity")
-        opacity_lbl.setFixedWidth(130)
-        opacity_row_layout.addWidget(opacity_lbl)
-        self._overlay_opacity_slider = _NoScrollSlider(Qt.Horizontal)
-        self._overlay_opacity_slider.setRange(20, 100)
-        self._overlay_opacity_slider.setValue(round(self._cfg.overlay_opacity * 100))
-        opacity_row_layout.addWidget(self._overlay_opacity_slider, 1)
-        self._overlay_opacity_value_lbl = QLabel(f"{self._overlay_opacity_slider.value()}%")
-        self._overlay_opacity_value_lbl.setFixedWidth(40)
-        self._overlay_opacity_slider.valueChanged.connect(
-            lambda v: self._overlay_opacity_value_lbl.setText(f"{v}%")
-        )
-        opacity_row_layout.addWidget(self._overlay_opacity_value_lbl)
-        overlay_layout.addWidget(opacity_row)
-
-        self._hk_toggle_overlay = self._make_hotkey_row(
-            overlay_layout, "Toggle overlay", self._cfg.hotkey_toggle_overlay
-        )
-
-        overlay_hint = QLabel("Overlay hotkeys  (active only while the overlay is shown)")
-        overlay_hint.setStyleSheet("color: #888899; font-size: 11px;")
-        overlay_layout.addWidget(overlay_hint)
-
-        self._ov_hk_import = self._make_hotkey_row(overlay_layout, "Import save", self._cfg.overlay_hotkey_import)
-        self._ov_hk_load = self._make_hotkey_row(overlay_layout, "Load save", self._cfg.overlay_hotkey_load)
-        self._ov_hk_replace = self._make_hotkey_row(overlay_layout, "Replace save", self._cfg.overlay_hotkey_replace)
-        self._ov_hk_rename = self._make_hotkey_row(overlay_layout, "Rename current save", self._cfg.overlay_hotkey_rename)
-        self._ov_hk_ro = self._make_hotkey_row(overlay_layout, "Practice Mode", self._cfg.overlay_hotkey_ro_toggle)
-        self._ov_hk_next_slot = self._make_hotkey_row(overlay_layout, "Next slot", self._cfg.overlay_hotkey_next_slot)
-        self._ov_hk_prev_slot = self._make_hotkey_row(overlay_layout, "Previous slot", self._cfg.overlay_hotkey_prev_slot)
-        layout.addWidget(overlay_box)
-
-        # Game save paths
         paths_box = QGroupBox("Game save paths")
         paths_outer = QVBoxLayout(paths_box)
         paths_outer.setSpacing(6)
-
         self._paths_layout = QVBoxLayout()
         self._paths_layout.setSpacing(4)
         paths_outer.addLayout(self._paths_layout)
-
         add_btn = QPushButton("+ Add game")
         add_btn.setObjectName("ghostBtn")
         add_btn.setFixedWidth(110)
         add_btn.clicked.connect(self._on_add_game)
         paths_outer.addWidget(add_btn, alignment=Qt.AlignLeft)
-
         layout.addWidget(paths_box)
         layout.addStretch()
 
-        # Buttons — outside the scroll area so they're always visible
-        from PySide6.QtWidgets import QFrame
+        # Buttons sit outside the scroll area so they're always visible.
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
         divider.setFixedHeight(1)
@@ -305,73 +192,146 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(save_btn)
         outer.addLayout(btn_row)
 
-    def _make_hotkey_row(self, parent_layout: QVBoxLayout, label: str, current: str) -> QKeySequenceEdit:
+    def _build_updates_box(self) -> QGroupBox:
+        box = QGroupBox("Updates")
+        box_layout = QVBoxLayout(box)
+        row = QHBoxLayout()
+        row.addWidget(QLabel(f"Version {__version__}"))
+        self._update_status_lbl = QLabel("")
+        self._update_status_lbl.setStyleSheet("color: #888899;")
+        row.addWidget(self._update_status_lbl, 1)
+        self._check_updates_btn = QPushButton("Check for Updates")
+        self._check_updates_btn.setObjectName("ghostBtn")
+        self._check_updates_btn.clicked.connect(self._on_check_updates)
+        row.addWidget(self._check_updates_btn)
+        box_layout.addLayout(row)
+        self._add_checkbox(box_layout, "check_updates_on_startup",
+                           "Automatically check for updates when opening")
+        return box
+
+    def _build_companion_box(self) -> QGroupBox:
+        box = QGroupBox("Companion app")
+        box_layout = QVBoxLayout(box)
+        self._companion_enabled = QCheckBox("Allow the phone companion app to connect over Wi-Fi")
+        self._companion_enabled.setChecked(self._cfg.companion_enabled)
+        self._companion_enabled.toggled.connect(self._on_companion_toggled)
+        box_layout.addWidget(self._companion_enabled)
+
+        get_app_btn = QPushButton("Get the companion app ↗")
+        get_app_btn.setObjectName("ghostBtn")
+        get_app_btn.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://github.com/JacksonW98/fromsave-companion/releases/latest")
+        ))
+        self._companion_reveal_btn = QPushButton("Show connection info")
+        self._companion_reveal_btn.setObjectName("ghostBtn")
+        self._companion_reveal_btn.clicked.connect(self._on_companion_reveal)
+        for btn in (get_app_btn, self._companion_reveal_btn):
+            row = QHBoxLayout()
+            row.addWidget(btn)
+            row.addStretch()
+            box_layout.addLayout(row)
+
+        self._companion_info = QLabel("")
+        self._companion_info.setStyleSheet("color: #888899;")
+        self._companion_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box_layout.addWidget(self._companion_info)
+
+        hint = QLabel(
+            "The address and code shown are private to your home network — "
+            "they are not visible to the internet and reveal nothing about you."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #666677; font-size: 11px;")
+        box_layout.addWidget(hint)
+        self._refresh_companion_info()
+        return box
+
+    def _build_overlay_box(self) -> QGroupBox:
+        box = QGroupBox("Overlay")
+        box_layout = QVBoxLayout(box)
+        box_layout.setSpacing(6)
+
+        opacity_row = self._labelled_row(box_layout, "Opacity")
+        self._overlay_opacity_slider = _NoScrollSlider(Qt.Horizontal)
+        self._overlay_opacity_slider.setRange(20, 100)
+        self._overlay_opacity_slider.setValue(round(self._cfg.overlay_opacity * 100))
+        opacity_row.addWidget(self._overlay_opacity_slider, 1)
+        value_lbl = QLabel(f"{self._overlay_opacity_slider.value()}%")
+        value_lbl.setFixedWidth(40)
+        self._overlay_opacity_slider.valueChanged.connect(lambda v: value_lbl.setText(f"{v}%"))
+        opacity_row.addWidget(value_lbl)
+
+        self._add_hotkey_row(box_layout, "hotkey_toggle_overlay", "Toggle overlay")
+        hint = QLabel("Overlay hotkeys  (active only while the overlay is shown)")
+        hint.setStyleSheet("color: #888899; font-size: 11px;")
+        box_layout.addWidget(hint)
+        for field, label in _OVERLAY_HOTKEYS:
+            self._add_hotkey_row(box_layout, field, label)
+        return box
+
+    def _add_checkbox(self, layout: QVBoxLayout, field: str, text: str) -> QCheckBox:
+        checkbox = QCheckBox(text)
+        checkbox.setChecked(getattr(self._cfg, field))
+        layout.addWidget(checkbox)
+        self._checkboxes[field] = checkbox
+        return checkbox
+
+    @staticmethod
+    def _labelled_row(parent_layout: QVBoxLayout, label: str) -> QHBoxLayout:
         row = QWidget()
         row.setStyleSheet("background: transparent;")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
-
         lbl = QLabel(label)
         lbl.setFixedWidth(130)
         row_layout.addWidget(lbl)
+        parent_layout.addWidget(row)
+        return row_layout
 
-        editor = QKeySequenceEdit(QKeySequence(current))
+    def _add_hotkey_row(self, parent_layout: QVBoxLayout, field: str, label: str) -> None:
+        row = self._labelled_row(parent_layout, label)
+        editor = QKeySequenceEdit(QKeySequence(getattr(self._cfg, field)))
         editor.setMaximumWidth(160)
-        row_layout.addWidget(editor)
-
+        row.addWidget(editor)
         clear_btn = QPushButton("Clear")
         clear_btn.setFixedWidth(72)
         clear_btn.setObjectName("ghostBtn")
         clear_btn.clicked.connect(editor.clear)
-        row_layout.addWidget(clear_btn)
+        row.addWidget(clear_btn)
+        row.addStretch()
+        self._hotkey_edits[field] = editor
 
-        row_layout.addStretch()
-        parent_layout.addWidget(row)
-        return editor
-
-    def _add_game_row(self, name: str, mode: str, path: str = "", save_paths: list[str] | None = None) -> None:
-        entry: dict = {"name": name, "mode": mode}
-
-        row = QWidget()
-        row.setStyleSheet("background: transparent;")
-        row_layout = QHBoxLayout(row)
+    def _add_game_row(self, name: str, mode: str, path_text: str) -> None:
+        widget = QWidget()
+        widget.setStyleSheet("background: transparent;")
+        row_layout = QHBoxLayout(widget)
         row_layout.setContentsMargins(0, 2, 0, 2)
         row_layout.setSpacing(8)
 
         lbl = QLabel(name)
         lbl.setFixedWidth(130)
-
         mode_combo = _NoScrollComboBox()
         mode_combo.setFixedWidth(110)
         mode_combo.addItem("File", "file")
         mode_combo.addItem("Multiple files", "files")
         mode_combo.addItem("Folder", "folder")
-        idx = mode_combo.findData(mode)
-        mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
-
-        if mode == "files":
-            initial_text = "; ".join(save_paths) if save_paths else path
-            edit = QLineEdit(initial_text)
-            edit.setPlaceholderText("Paths separated by  ;  — use 'Add files…' to browse")
-            browse_btn = QPushButton("Add files…")
-            browse_btn.setFixedWidth(100)
-        else:
-            edit = QLineEdit(path)
-            edit.setPlaceholderText("Path to save file…" if mode == "file" else "Path to save folder…")
-            browse_btn = QPushButton("Browse…")
-            browse_btn.setFixedWidth(90)
-        browse_btn.clicked.connect(self._make_browse(edit, mode))
-
+        mode_combo.setCurrentIndex(max(0, mode_combo.findData(mode)))
+        edit = QLineEdit(path_text)
+        browse_btn = QPushButton()
+        set_path_input_mode(edit, browse_btn, mode)
         reveal_btn = QPushButton("Click to reveal")
         reveal_btn.setObjectName("revealPathBtn")
         reveal_btn.setVisible(False)
-        reveal_btn.clicked.connect(lambda checked=False, e=entry: self._reveal_path(e))
-
         del_btn = QPushButton("×")
         del_btn.setObjectName("dangerBtn")
         del_btn.setFixedWidth(40)
-        del_btn.clicked.connect(lambda: self._remove_game_row(entry))
+
+        row = _GameRow(name, mode, widget, mode_combo, edit, browse_btn, reveal_btn)
+        browse_btn.clicked.connect(lambda: browse_save_path(self, edit, row.mode))
+        reveal_btn.clicked.connect(lambda: self._reveal_path(row))
+        del_btn.clicked.connect(lambda: self._remove_game_row(row))
+        mode_combo.currentIndexChanged.connect(lambda: self._on_row_mode_changed(row))
 
         row_layout.addWidget(lbl)
         row_layout.addWidget(mode_combo)
@@ -379,95 +339,51 @@ class SettingsDialog(QDialog):
         row_layout.addWidget(reveal_btn, 1)
         row_layout.addWidget(browse_btn)
         row_layout.addWidget(del_btn)
+        self._game_rows.append(row)
+        self._paths_layout.addWidget(widget)
 
-        entry["mode_combo"] = mode_combo
-        entry["edit"] = edit
-        entry["browse_btn"] = browse_btn
-        entry["reveal_btn"] = reveal_btn
-        entry["widget"] = row
-
-        mode_combo.currentIndexChanged.connect(lambda _=None, e=entry: self._on_row_mode_changed(e))
-
-        self._game_entries.append(entry)
-        self._paths_layout.addWidget(row)
-
-    def _on_row_mode_changed(self, entry: dict) -> None:
-        new_mode = entry["mode_combo"].currentData()
-        if new_mode == entry["mode"]:
-            return
-        entry["mode"] = new_mode
-        entry["edit"].clear()
-        if new_mode == "files":
-            entry["edit"].setPlaceholderText("Paths separated by  ;  — use 'Add files…' to browse")
-            entry["browse_btn"].setText("Add files…")
-            entry["browse_btn"].setFixedWidth(100)
-        else:
-            entry["edit"].setPlaceholderText("Path to save file…" if new_mode == "file" else "Path to save folder…")
-            entry["browse_btn"].setText("Browse…")
-            entry["browse_btn"].setFixedWidth(90)
-        entry["browse_btn"].clicked.disconnect()
-        entry["browse_btn"].clicked.connect(self._make_browse(entry["edit"], new_mode))
+    def _on_row_mode_changed(self, row: _GameRow) -> None:
+        new_mode = row.mode_combo.currentData()
+        if new_mode != row.mode:
+            row.mode = new_mode
+            row.edit.clear()
+            set_path_input_mode(row.edit, row.browse_btn, new_mode)
 
     def _apply_path_hide(self) -> None:
-        hide = self._hide_paths.isChecked()
-        for entry in self._game_entries:
-            entry["edit"].setVisible(not hide)
-            entry["reveal_btn"].setVisible(hide)
+        hide = self._checkboxes["hide_paths"].isChecked()
+        for row in self._game_rows:
+            row.edit.setVisible(not hide)
+            row.reveal_btn.setVisible(hide)
 
-    def _reveal_path(self, entry: dict) -> None:
-        entry["reveal_btn"].setVisible(False)
-        entry["edit"].setVisible(True)
+    @staticmethod
+    def _reveal_path(row: _GameRow) -> None:
+        row.reveal_btn.setVisible(False)
+        row.edit.setVisible(True)
 
-    def _remove_game_row(self, entry: dict) -> None:
+    def _remove_game_row(self, row: _GameRow) -> None:
         reply = QMessageBox.question(
             self, "Remove game",
-            f"Remove '{entry['name']}' from the list?\n\nThis will not delete any saved slots.",
+            f"Remove '{row.name}' from the list?\n\nThis will not delete any saved slots.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
-        entry["widget"].hide()
-        entry["widget"].deleteLater()
-        self._game_entries.remove(entry)
-        self._removed_game_names.append(entry["name"])
+        row.widget.hide()
+        row.widget.deleteLater()
+        self._game_rows.remove(row)
+        self._removed_game_names.append(row.name)
 
     def _on_add_game(self) -> None:
         dlg = AddGameDialog(self)
         if not dlg.exec():
             return
-        name, mode, path = dlg.result
-        if any(e["name"] == name for e in self._game_entries):
+        name, mode, path_text = dlg.result
+        if any(row.name == name for row in self._game_rows):
             QMessageBox.warning(self, "Duplicate", f"'{name}' is already in the list.")
             return
-        # For "files" mode, path is already a "; "-separated string from AddGameDialog
-        self._add_game_row(name, mode, path)
-
-    def _make_browse(self, edit: QLineEdit, mode: str):
-        def handler():
-            if mode == "file":
-                path, _ = QFileDialog.getOpenFileName(
-                    self, "Select save file", edit.text() or ""
-                )
-                if path:
-                    edit.setText(path)
-            elif mode == "files":
-                paths, _ = QFileDialog.getOpenFileNames(self, "Select save files", "")
-                if paths:
-                    existing = [p.strip() for p in edit.text().split(";") if p.strip()]
-                    merged = existing + [p for p in paths if p not in existing]
-                    edit.setText("; ".join(merged))
-            else:
-                path = QFileDialog.getExistingDirectory(
-                    self, "Select save folder", edit.text() or ""
-                )
-                if path:
-                    edit.setText(path)
-        return handler
+        self._add_game_row(name, mode, path_text)
 
     def _on_companion_toggled(self, checked: bool) -> None:
-        """The companion server starts/stops immediately — it's a live
-        service, so deferring to the Save button just made the checkbox
-        look broken."""
         if checked and not self._cfg.companion_firewall_notice_shown:
             QMessageBox.information(
                 self, "Companion app",
@@ -481,8 +397,7 @@ class SettingsDialog(QDialog):
                 self._on_companion_notice_shown()
         self._cfg.companion_enabled = checked
         if self._on_companion_toggle is not None:
-            token = self._on_companion_toggle(checked)
-            if token:
+            if token := self._on_companion_toggle(checked):
                 self._cfg.companion_token = token
         if not checked:
             self._companion_info_visible = False
@@ -494,61 +409,29 @@ class SettingsDialog(QDialog):
 
     def _refresh_companion_info(self) -> None:
         enabled = self._companion_enabled.isChecked()
+        show = enabled and self._companion_info_visible
         self._companion_reveal_btn.setEnabled(enabled)
+        self._companion_reveal_btn.setText("Hide connection info" if show else "Show connection info")
+        self._companion_info.setVisible(show)
         if not enabled:
-            self._companion_reveal_btn.setText("Show connection info")
-            self._companion_info.setVisible(False)
             return
         if not self._cfg.companion_token:
             self._cfg.companion_token = api_server.generate_pair_code()
-        if self._companion_info_visible:
-            self._companion_reveal_btn.setText("Hide connection info")
-            self._companion_info.setText(
-                f"In the phone app, connect to  {api_server.local_ip()}:{self._cfg.companion_port}"
-                f"  with pairing code  {self._cfg.companion_token}"
-            )
-            self._companion_info.setVisible(True)
-        else:
-            self._companion_reveal_btn.setText("Show connection info")
-            self._companion_info.setVisible(False)
+        self._companion_info.setText(
+            f"In the phone app, connect to  {api_server.local_ip()}:{self._cfg.companion_port}"
+            f"  with pairing code  {self._cfg.companion_token}"
+        )
+
+    def _form_values(self) -> dict:
+        """Config field values currently shown by the form (except the companion toggle)."""
+        values = {field: cb.isChecked() for field, cb in self._checkboxes.items()}
+        values.update({field: e.keySequence().toString() for field, e in self._hotkey_edits.items()})
+        values["auto_name_imports"] = self._auto_name.isChecked()
+        values["overlay_opacity"] = self._overlay_opacity_slider.value() / 100.0
+        return values
 
     def _has_changes(self) -> bool:
-        current_cfg = (
-            self._confirm_delete.isChecked(),
-            self._confirm_replace.isChecked(),
-            self._confirm_lock_slot.isChecked(),
-            self._auto_name.isChecked(),
-            self._hide_paths.isChecked(),
-            self._soft_delete.isChecked(),
-            self._hide_details.isChecked(),
-            self._hk_import.keySequence().toString(),
-            self._hk_load.keySequence().toString(),
-            self._hk_replace.keySequence().toString(),
-            self._hk_ro.keySequence().toString(),
-            self._hk_next_slot.keySequence().toString(),
-            self._hk_prev_slot.keySequence().toString(),
-            self._global_hotkeys_enabled.isChecked(),
-            self._check_updates_on_startup.isChecked(),
-            self._hk_toggle_overlay.keySequence().toString(),
-            self._ov_hk_import.keySequence().toString(),
-            self._ov_hk_load.keySequence().toString(),
-            self._ov_hk_replace.keySequence().toString(),
-            self._ov_hk_rename.keySequence().toString(),
-            self._ov_hk_ro.keySequence().toString(),
-            self._ov_hk_next_slot.keySequence().toString(),
-            self._ov_hk_prev_slot.keySequence().toString(),
-            self._overlay_opacity_slider.value() / 100.0,
-        )
-        if current_cfg != self._initial_cfg:
-            return True
-        current_games = []
-        for e in self._game_entries:
-            if e["mode"] == "files":
-                paths = tuple(p.strip() for p in e["edit"].text().split(";") if p.strip())
-                current_games.append((e["name"], e["mode"], "", paths))
-            else:
-                current_games.append((e["name"], e["mode"], e["edit"].text().strip(), ()))
-        return current_games != self._initial_games
+        return self._form_values() != self._initial_values or self.result_games != self._initial_games
 
     def reject(self) -> None:
         if self._has_changes():
@@ -562,123 +445,23 @@ class SettingsDialog(QDialog):
         super().reject()
 
     def _on_save(self) -> None:
-        self._cfg.confirm_replace = self._confirm_replace.isChecked()
-        self._cfg.confirm_delete = self._confirm_delete.isChecked()
-        self._cfg.confirm_lock_slot = self._confirm_lock_slot.isChecked()
-        self._cfg.auto_name_imports = self._auto_name.isChecked()
-        self._cfg.hide_paths = self._hide_paths.isChecked()
-        self._cfg.hotkey_import = self._hk_import.keySequence().toString()
-        self._cfg.hotkey_load = self._hk_load.keySequence().toString()
-        self._cfg.hotkey_replace = self._hk_replace.keySequence().toString()
-        self._cfg.hotkey_ro_toggle = self._hk_ro.keySequence().toString()
-        self._cfg.hotkey_next_slot = self._hk_next_slot.keySequence().toString()
-        self._cfg.hotkey_prev_slot = self._hk_prev_slot.keySequence().toString()
-        self._cfg.global_hotkeys_enabled = self._global_hotkeys_enabled.isChecked()
-        self._cfg.soft_delete = self._soft_delete.isChecked()
-        self._cfg.hide_details = self._hide_details.isChecked()
-        self._cfg.check_updates_on_startup = self._check_updates_on_startup.isChecked()
-        self._cfg.overlay_opacity = self._overlay_opacity_slider.value() / 100.0
-        self._cfg.hotkey_toggle_overlay = self._hk_toggle_overlay.keySequence().toString()
-        self._cfg.overlay_hotkey_import = self._ov_hk_import.keySequence().toString()
-        self._cfg.overlay_hotkey_load = self._ov_hk_load.keySequence().toString()
-        self._cfg.overlay_hotkey_replace = self._ov_hk_replace.keySequence().toString()
-        self._cfg.overlay_hotkey_rename = self._ov_hk_rename.keySequence().toString()
-        self._cfg.overlay_hotkey_ro_toggle = self._ov_hk_ro.keySequence().toString()
-        self._cfg.overlay_hotkey_next_slot = self._ov_hk_next_slot.keySequence().toString()
-        self._cfg.overlay_hotkey_prev_slot = self._ov_hk_prev_slot.keySequence().toString()
+        for field, value in self._form_values().items():
+            setattr(self._cfg, field, value)
         self._cfg.companion_enabled = self._companion_enabled.isChecked()
         self.accept()
+
+    def _on_check_updates(self) -> None:
+        self._check_updates_btn.setEnabled(False)
+        self._update_flow.start()
 
     @property
     def result_config(self) -> config.Config:
         return self._cfg
 
     @property
-    def removed_game_names(self) -> list[str]:
-        return self._removed_game_names
-
-    def _on_check_updates(self) -> None:
-        self._check_updates_btn.setEnabled(False)
-        self._update_status_lbl.setText("Checking for updates…")
-        self._updater.start_check()
-
-    def _on_check_failed(self, message: str) -> None:
-        self._check_updates_btn.setEnabled(True)
-        self._update_status_lbl.setText("Update check failed.")
-        QMessageBox.warning(self, "Update check failed", f"Couldn't check for updates:\n\n{message}")
-
-    def _on_check_succeeded(self, info) -> None:
-        self._check_updates_btn.setEnabled(True)
-        if info is None:
-            self._update_status_lbl.setText(f"You're up to date  (v{__version__}).")
-            return
-
-        self._update_status_lbl.setText(f"Version {info.version} is available.")
-        reply = QMessageBox.question(
-            self, "Update available",
-            f"Version {info.version} is available (you have v{__version__}).\n\n"
-            f"{info.notes}\n\nDownload and install it now? "
-            "The app will close and restart automatically.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._check_updates_btn.setEnabled(False)
-        self._update_progress_dlg = QProgressDialog("Downloading update…", "", 0, 100, self)
-        self._update_progress_dlg.setCancelButton(None)
-        self._update_progress_dlg.setWindowModality(Qt.WindowModal)
-        self._update_progress_dlg.setMinimumDuration(0)
-        self._update_progress_dlg.show()
-        self._updater.start_download(info)
-
-    def _on_download_progress(self, downloaded: int, total: int) -> None:
-        if self._update_progress_dlg is None:
-            return
-        if total > 0:
-            self._update_progress_dlg.setValue(int(downloaded * 100 / total))
-        else:
-            self._update_progress_dlg.setLabelText(f"Downloading update… {downloaded // (1024 * 1024)} MB")
-
-    def _on_download_failed(self, message: str) -> None:
-        if self._update_progress_dlg is not None:
-            self._update_progress_dlg.close()
-            self._update_progress_dlg = None
-        self._check_updates_btn.setEnabled(True)
-        self._update_status_lbl.setText("Update download failed.")
-        QMessageBox.warning(self, "Update failed", f"Couldn't download the update:\n\n{message}")
-
-    def _on_download_ready(self, staged_dir, zip_path) -> None:
-        if self._update_progress_dlg is not None:
-            self._update_progress_dlg.close()
-            self._update_progress_dlg = None
-
-        if not getattr(sys, "frozen", False):
-            QMessageBox.information(
-                self, "Update downloaded",
-                "The update was downloaded, but self-install only works in the packaged "
-                ".exe build. Since this is running from source, please pull the latest "
-                "changes instead.",
-            )
-            self._check_updates_btn.setEnabled(True)
-            return
-
-        updater.apply_update_and_restart(staged_dir, zip_path)
-        QApplication.instance().quit()
+    def result_games(self) -> list[storage.GameConfig]:
+        return [row.to_config() for row in self._game_rows]
 
     @property
-    def result_games(self) -> list[storage.GameConfig]:
-        result = []
-        for e in self._game_entries:
-            if e["mode"] == "files":
-                paths = [p.strip() for p in e["edit"].text().split(";") if p.strip()]
-                result.append(storage.GameConfig(
-                    name=e["name"], save_path="", save_mode="files", save_paths=paths,
-                ))
-            else:
-                result.append(storage.GameConfig(
-                    name=e["name"],
-                    save_path=e["edit"].text().strip(),
-                    save_mode=e["mode"],
-                ))
-        return result
+    def removed_game_names(self) -> list[str]:
+        return self._removed_game_names
