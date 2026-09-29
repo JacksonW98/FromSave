@@ -1,48 +1,32 @@
 import logging
-import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize, QTimer, QFileSystemWatcher, QUrl, QEvent, QPointF
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QDesktopServices, QPainter, QColor, QPolygonF, QImage
+from PySide6.QtCore import QEvent, QFileSystemWatcher, QSignalBlocker, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QComboBox, QListWidget, QListWidgetItem, QLabel,
-    QPushButton, QStatusBar, QSplitter, QFrame,
-    QSizePolicy, QAbstractItemView, QPlainTextEdit, QInputDialog, QMessageBox, QMenu,
-    QLineEdit, QFileDialog, QStackedWidget, QSlider, QScrollArea, QDialog, QCheckBox,
-    QProgressDialog, QApplication,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSplitter,
+    QStatusBar, QVBoxLayout, QWidget,
 )
 
 import api_server
 import config
 import storage
-import updater
-import video as video_module
 from hotkeys import GlobalHotkeyListener, GlobalTextInputListener, is_wayland_session
 from ui.configure_game_dialog import ConfigureGameDialog
 from ui.overlay_window import OverlayWindow
 from ui.profiles_dialog import ProfilesDialog
 from ui.settings_dialog import SettingsDialog
-from version import __version__
+from ui.update_flow import UpdateFlow
+from ui.video_player import InlineVideoPlayer
 
 logger = logging.getLogger(__name__)
 
-try:
-    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
-    _HAS_MULTIMEDIA = True
-except ImportError:
-    _HAS_MULTIMEDIA = False
-
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWebEngineCore import QWebEngineSettings
-    _HAS_WEBENGINE = True
-except ImportError:
-    _HAS_WEBENGINE = False
-
+_UI_DIR = Path(__file__).parent
+_SORT_LABELS = {"modified": "Modified", "created": "Created", "name": "Name", "custom": "Custom"}
 
 def _hotkey_label(key: str) -> str:
     if not key:
@@ -56,22 +40,24 @@ def _btn_text(base: str, key: str) -> str:
 
 
 def _fix_combo_first_click(combo: QComboBox) -> None:
-    """Select a popup item (and close the popup) on mouse press instead of
-    release.
+    """Select popup items on mouse press instead of release.
 
-    With the app's stylesheet applied, the popup's QAbstractItemView is
-    repainted with its styled padding just after it's shown, which can shift
-    item hit-test geometry enough that the very first click after opening
-    registers on the wrong row (or none) — the item only responds correctly
-    from the second click on. Selecting on press sidesteps the stale-release
-    coordinates entirely. Qt's own release-based auto-close no longer has a
-    consistent index to react to once we've already changed it on press, so
-    hidePopup() is called explicitly rather than left to close on its own.
+    With the stylesheet applied, the popup's item geometry shifts just after it
+    opens, so the first click could land on the wrong row (or none).
     """
     def _select_and_close(index) -> None:
         combo.setCurrentIndex(index.row())
         combo.hidePopup()
     combo.view().pressed.connect(_select_and_close)
+
+
+def _set_combo_items(combo: QComboBox, items: list[str], select: str = "") -> None:
+    """Replace combo's items without emitting signals, selecting `select` or the first item."""
+    with QSignalBlocker(combo):
+        combo.clear()
+        combo.addItems(items)
+        if items:
+            combo.setCurrentIndex(max(0, combo.findText(select)))
 
 
 class MainWindow(QMainWindow):
@@ -106,20 +92,24 @@ class MainWindow(QMainWindow):
         self._guard_cfg: Optional[storage.GameConfig] = None
 
         self._confirm_dialog: Optional[QMessageBox] = None
-        self._confirm_action: Optional[str] = None  # "replace" | "delete"
+        self._confirm_action: Optional[str] = None  # "replace" | "delete" | "lock"
         self._protect_warning_shown: bool = False
         self._protect_warning_open: bool = False
 
         self._global_hotkeys = GlobalHotkeyListener(self)
+        self._global_hotkeys.triggered.connect(self._on_main_hotkey)
+        self._global_hotkeys_started = False
+        self._shortcuts: list[QShortcut] = []
         self._overlay_toggle_hotkey = GlobalHotkeyListener(self)
+        self._overlay_toggle_hotkey.triggered.connect(self._toggle_overlay)
+        self._overlay_toggle_shortcut: Optional[QShortcut] = None
         self._overlay_action_hotkeys = GlobalHotkeyListener(self)
-        # Shared by both the overlay's rename and import-name prompts (only one
-        # can be active at a time); this says which one submitted/cancelled
-        # should act on.
+        self._overlay_action_hotkeys.triggered.connect(self._on_overlay_hotkey)
+
+        # The overlay's rename and import prompts share one text listener.
         self._overlay_text_mode: str = "rename"  # "rename" | "import"
         self._overlay_rename_input = GlobalTextInputListener(self)
-        # Keep the overlay independent of the main window so minimizing the
-        # manager does not also minimize the always-on-top status panel.
+        # No parent, so minimizing the main window doesn't hide the overlay.
         self._overlay = OverlayWindow(on_moved=self._on_overlay_moved)
         self._overlay_rename_input.text_changed.connect(self._overlay.set_rename_text)
         self._overlay_rename_input.submitted.connect(self._on_overlay_text_submitted)
@@ -129,46 +119,34 @@ class MainWindow(QMainWindow):
         self._companion.saves_changed.connect(self._on_remote_saves_changed)
         self._companion.sort_changed.connect(self._on_remote_sort_changed)
 
-        self._startup_updater = updater.UpdateChecker()
-        self._startup_updater.check_succeeded.connect(self._on_startup_check_succeeded)
-        self._startup_updater.check_failed.connect(self._on_startup_check_failed)
-        self._startup_updater.download_progress.connect(self._on_startup_download_progress)
-        self._startup_updater.download_ready.connect(self._on_startup_download_ready)
-        self._startup_updater.download_failed.connect(self._on_startup_download_failed)
-        self._startup_update_progress_dlg: Optional[QProgressDialog] = None
-
-        self._global_hotkeys_started = False
         self._build_ui()
         self._apply_info_panel()
-
-        # Restore saved window size (minimum is enforced by _sync_minimum_size via timer)
         w, h = self._config.window_width, self._config.window_height
         self.resize(w if w > 0 else 700, h if h > 0 else 580)
 
-        self._global_hotkeys.import_triggered.connect(self._on_import_save)
-        self._global_hotkeys.load_triggered.connect(self._on_load_save)
-        self._global_hotkeys.replace_triggered.connect(self._on_replace_save)
-        self._global_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
-        self._global_hotkeys.next_slot_triggered.connect(self._select_next_slot)
-        self._global_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
+        self._main_actions = {
+            "import": self._on_import_save,
+            "load": self._on_load_save,
+            "replace": self._on_replace_save,
+            "ro_toggle": self.ro_btn.toggle,
+            "next_slot": self._select_next_slot,
+            "prev_slot": self._select_prev_slot,
+        }
+        self._overlay_actions = {
+            **self._main_actions,
+            "import": self._on_overlay_import_triggered,
+            "rename": self._begin_overlay_rename,
+        }
 
-        self._overlay_toggle_hotkey.toggle_overlay_triggered.connect(self._toggle_overlay)
-        self._overlay_action_hotkeys.import_triggered.connect(self._on_overlay_import_triggered)
-        self._overlay_action_hotkeys.load_triggered.connect(self._on_load_save)
-        self._overlay_action_hotkeys.replace_triggered.connect(self._on_replace_save)
-        self._overlay_action_hotkeys.rename_triggered.connect(self._begin_overlay_rename)
-        self._overlay_action_hotkeys.ro_toggle_triggered.connect(self.ro_btn.toggle)
-        self._overlay_action_hotkeys.next_slot_triggered.connect(self._select_next_slot)
-        self._overlay_action_hotkeys.prev_slot_triggered.connect(self._select_prev_slot)
-
-        self._load_data()
+        self._load_data(self._config.last_game, self._config.last_profile, self._config.last_slot)
         self.apply_stylesheet()
         self._apply_hotkeys()
         self._apply_overlay_toggle_hotkey()
         self._apply_companion_server()
         QTimer.singleShot(0, self._prompt_unconfigured_games)
+        self._startup_update = UpdateFlow(self, quiet=True)
         if self._config.check_updates_on_startup:
-            QTimer.singleShot(0, self._startup_updater.start_check)
+            QTimer.singleShot(0, self._startup_update.start)
 
     # UI construction
 
@@ -249,9 +227,8 @@ class MainWindow(QMainWindow):
 
         bar.addStretch()
 
-
         self.settings_btn = QPushButton(" Settings")
-        self.settings_btn.setIcon(QIcon(str(Path(__file__).parent / "settings.svg")))
+        self.settings_btn.setIcon(QIcon(str(_UI_DIR / "settings.svg")))
         self.settings_btn.setIconSize(QSize(14, 14))
         self.settings_btn.setObjectName("ghostBtn")
         self.settings_btn.clicked.connect(self._on_open_settings)
@@ -274,28 +251,25 @@ class MainWindow(QMainWindow):
         header.addStretch()
 
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Modified", "Created", "Name", "Custom"])
+        for mode, label in _SORT_LABELS.items():
+            self.sort_combo.addItem(label, mode)
         self.sort_combo.setFixedWidth(115)
-        _sort_label = {"modified": "Modified", "created": "Created", "name": "Name", "custom": "Custom"}
-        self.sort_combo.setCurrentText(_sort_label.get(self._config.slot_sort, "Modified"))
-        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         _fix_combo_first_click(self.sort_combo)
         header.addWidget(self.sort_combo)
 
-        _ui_dir = Path(__file__).parent
-        self._icon_sort_desc = QIcon(str(_ui_dir / "sort_desc.svg"))
-        self._icon_sort_asc = QIcon(str(_ui_dir / "sort_asc.svg"))
+        self._icon_sort_desc = QIcon(str(_UI_DIR / "sort_desc.svg"))
+        self._icon_sort_asc = QIcon(str(_UI_DIR / "sort_asc.svg"))
 
         header.addSpacing(4)
         self.sort_dir_btn = QPushButton()
-        self.sort_dir_btn.setIcon(self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc)
         self.sort_dir_btn.setIconSize(QSize(16, 16))
         self.sort_dir_btn.setObjectName("ghostBtn")
         self.sort_dir_btn.setFixedWidth(36)
-        self.sort_dir_btn.setEnabled(self._config.slot_sort != "custom")
         self.sort_dir_btn.setToolTip("Toggle ascending / descending")
         self.sort_dir_btn.clicked.connect(self._on_sort_dir_toggled)
         header.addWidget(self.sort_dir_btn)
+        self._sync_sort_widgets()
 
         layout.addLayout(header)
 
@@ -384,7 +358,7 @@ class MainWindow(QMainWindow):
         video_row.addWidget(self.clear_video_btn)
         layout.addLayout(video_row)
 
-        self._inline_player = _InlineVideoPlayer()
+        self._inline_player = InlineVideoPlayer()
         self._inline_player.setVisible(False)
         layout.addWidget(self._inline_player)
 
@@ -460,22 +434,11 @@ class MainWindow(QMainWindow):
 
     # Data loading
 
-    def _configure_game(self, name: str, mode: str) -> None:
-        game_cfg = storage.GameConfig(name=name, save_path="", save_mode=mode)
-        storage.save_game_config(game_cfg)
-        for g in self._games:
-            if g.name == name:
-                g.save_mode = mode
-                break
-
     def _prompt_unconfigured_games(self) -> None:
-        unconfigured = storage.find_unconfigured_games()
         changed = False
-        for name in unconfigured:
+        for name in storage.find_unconfigured_games():
             if name in storage.BUNDLED_GAMES:
-                # Pre-created saves/ folder from the release zip — these are
-                # all known single-file games, so skip asking.
-                self._configure_game(name, "file")
+                storage.save_game_config(storage.GameConfig(name, "", "file"))
                 changed = True
                 self.status_bar.showMessage(
                     f"'{name}' configured automatically — open Settings to set the save path.", 8000
@@ -484,240 +447,127 @@ class MainWindow(QMainWindow):
             dlg = ConfigureGameDialog(name, self)
             if dlg.exec() != QDialog.Accepted:
                 continue
-            self._configure_game(name, dlg.result_mode)
+            storage.save_game_config(storage.GameConfig(name, "", dlg.result_mode))
             changed = True
             self.status_bar.showMessage(
                 f"'{name}' configured as {dlg.result_mode} — open Settings to set the save path.", 8000
             )
         if changed:
             self._games = storage.load_games()
-            self._load_data()
+            self._load_data(self.game_combo.currentText(), self.profile_combo.currentText(),
+                            self._current_slot_name())
 
-    def _on_startup_check_failed(self, message: str) -> None:
-        logger.warning("Startup update check failed: %s", message)
+    def _current_slot_name(self) -> str:
+        return self._current_slot.name if self._current_slot else ""
 
-    def _on_startup_check_succeeded(self, info) -> None:
-        if info is None:
-            return
-        reply = QMessageBox.question(
-            self, "Update available",
-            f"Version {info.version} is available (you have v{__version__}).\n\n"
-            f"{info.notes}\n\nDownload and install it now? "
-            "The app will close and restart automatically.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
-        )
-        if reply != QMessageBox.Yes:
-            return
+    def _load_data(self, game: str = "", profile: str = "", slot: str = "") -> None:
+        """Repopulate the game and profile combos and the slot list, keeping the given selection."""
+        _set_combo_items(self.game_combo, [g.name for g in self._games], game)
+        self._reload_profiles(profile)
+        self._update_save_path_info()
+        self._reload_slots(slot)
 
-        self._startup_update_progress_dlg = QProgressDialog("Downloading update…", "", 0, 100, self)
-        self._startup_update_progress_dlg.setCancelButton(None)
-        self._startup_update_progress_dlg.setWindowModality(Qt.WindowModal)
-        self._startup_update_progress_dlg.setMinimumDuration(0)
-        self._startup_update_progress_dlg.show()
-        self._startup_updater.start_download(info)
+    def _reload_profiles(self, select: str = "") -> None:
+        previous = self.profile_combo.currentText()
+        _set_combo_items(self.profile_combo, storage.load_profiles(self.game_combo.currentText()), select)
+        if self.profile_combo.currentText() != previous:
+            self._disable_practice_mode_for_context_switch()
 
-    def _on_startup_download_progress(self, downloaded: int, total: int) -> None:
-        if self._startup_update_progress_dlg is None:
-            return
-        if total > 0:
-            self._startup_update_progress_dlg.setValue(int(downloaded * 100 / total))
-        else:
-            self._startup_update_progress_dlg.setLabelText(f"Downloading update… {downloaded // (1024 * 1024)} MB")
-
-    def _on_startup_download_failed(self, message: str) -> None:
-        if self._startup_update_progress_dlg is not None:
-            self._startup_update_progress_dlg.close()
-            self._startup_update_progress_dlg = None
-        QMessageBox.warning(self, "Update failed", f"Couldn't download the update:\n\n{message}")
-
-    def _on_startup_download_ready(self, staged_dir, zip_path) -> None:
-        if self._startup_update_progress_dlg is not None:
-            self._startup_update_progress_dlg.close()
-            self._startup_update_progress_dlg = None
-
-        if not getattr(sys, "frozen", False):
-            QMessageBox.information(
-                self, "Update downloaded",
-                "The update was downloaded, but self-install only works in the packaged "
-                ".exe build. Since this is running from source, please pull the latest "
-                "changes instead.",
-            )
-            return
-
-        updater.apply_update_and_restart(staged_dir, zip_path)
-        QApplication.instance().quit()
-
-    def _load_data(self) -> None:
-        self.game_combo.blockSignals(True)
-        self.game_combo.clear()
-        for game in self._games:
-            self.game_combo.addItem(game.name)
-        self.game_combo.blockSignals(False)
-
-        if not self._games:
-            self.profile_combo.clear()
-            self._reload_slots()
-            return
-
-        # Restore last game, fall back to first
-        game_idx = self.game_combo.findText(self._config.last_game)
-        if game_idx < 0:
-            game_idx = 0
-        self.game_combo.setCurrentIndex(game_idx)
-
-        # Load profiles for selected game
-        game_name = self.game_combo.currentText()
-        profiles = storage.load_profiles(game_name)
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.clear()
-        for p in profiles:
-            self.profile_combo.addItem(p)
-        self.profile_combo.blockSignals(False)
-
-        # Restore last profile, fall back to first
-        if profiles:
-            profile_idx = self.profile_combo.findText(self._config.last_profile)
-            if profile_idx < 0:
-                profile_idx = 0
-            self.profile_combo.setCurrentIndex(profile_idx)
-
-        # Update game info panel
-        game_cfg = self._get_game_cfg()
+    def _update_save_path_info(self) -> None:
         self.info_save_path.setVisible(not self._config.hide_paths)
-        self.info_save_path.set_value(_game_path_display(game_cfg))
-
-        # Load slots, restoring last selected slot
-        self._reload_slots(self._config.last_slot)
+        self.info_save_path.set_value(_game_path_display(self._get_game_cfg()))
 
     def _disable_practice_mode_for_context_switch(self) -> None:
-        """Practice Mode guards one game's live save; switching to a
-        different game or profile makes that guard meaningless, so turn it
-        off (this also restores the pre-practice save, same as a normal
-        disable) rather than leaving it silently protecting the old one."""
+        """Practice Mode guards one game's live save, so switching game or profile turns it
+        off (which also restores the pre-practice save)."""
         if self.ro_btn.isChecked():
-            self.ro_btn.setChecked(False)  # triggers _on_ro_toggled(False)
+            self.ro_btn.setChecked(False)
 
     def _on_game_changed(self, _: int) -> None:
         self._disable_practice_mode_for_context_switch()
-        game_name = self.game_combo.currentText()
-        profiles = storage.load_profiles(game_name)
-
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.clear()
-        for p in profiles:
-            self.profile_combo.addItem(p)
-        self.profile_combo.blockSignals(False)
-
-        game_cfg = next((g for g in self._games if g.name == game_name), None)
-        self.info_save_path.setVisible(not self._config.hide_paths)
-        self.info_save_path.set_value(_game_path_display(game_cfg))
-
+        self._reload_profiles()
+        self._update_save_path_info()
         self._reload_slots()
 
     def _on_profile_changed(self, _: int) -> None:
         self._disable_practice_mode_for_context_switch()
         self._reload_slots()
 
-    def _on_sort_changed(self, text: str) -> None:
-        mode_map = {"Modified": "modified", "Created": "created", "Name": "name", "Custom": "custom"}
-        mode = mode_map.get(text, "modified")
+    def _sync_sort_widgets(self) -> None:
+        with QSignalBlocker(self.sort_combo):
+            self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(self._config.slot_sort)))
+        self.sort_dir_btn.setIcon(
+            self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc
+        )
+        self.sort_dir_btn.setEnabled(self._config.slot_sort != "custom")
+
+    def _on_sort_changed(self, _: int) -> None:
+        mode = self.sort_combo.currentData()
         if mode == self._config.slot_sort:
             return
         self._config.slot_sort = mode
-        self.sort_dir_btn.setEnabled(mode != "custom")
         config.save_config(self._config)
-        prev_slot = self._current_slot.name if self._current_slot else ""
-        self._reload_slots(prev_slot)
+        self._sync_sort_widgets()
+        self._reload_slots(self._current_slot_name())
         if mode == "custom":
             self.status_bar.showMessage("Custom order — drag slots to rearrange.", 4000)
 
     def _on_sort_dir_toggled(self) -> None:
         self._config.slot_sort_desc = not self._config.slot_sort_desc
-        self.sort_dir_btn.setIcon(
-            self._icon_sort_desc if self._config.slot_sort_desc else self._icon_sort_asc
-        )
         config.save_config(self._config)
-        prev_slot = self._current_slot.name if self._current_slot else ""
-        self._reload_slots(prev_slot)
+        self._sync_sort_widgets()
+        self._reload_slots(self._current_slot_name())
 
     def _on_rows_moved(self, *_) -> None:
         if self._config.slot_sort != "custom":
             return
-        new_slots = []
-        for i in range(self.slot_list.count()):
-            new_slots.append(self.slot_list.item(i).data(Qt.UserRole))
-        self._slots = new_slots
+        self._slots = [self.slot_list.item(i).data(Qt.UserRole) for i in range(self.slot_list.count())]
         storage.save_slot_order(
             self.game_combo.currentText(),
             self.profile_combo.currentText(),
             [s.name for s in self._slots],
         )
+        # Dragging drops the item widgets, so recreate them once the move settles.
         QTimer.singleShot(0, self._reattach_slot_widgets)
 
     def _reattach_slot_widgets(self) -> None:
-        compact = True
         for i in range(self.slot_list.count()):
             item = self.slot_list.item(i)
-            slot = item.data(Qt.UserRole)
-            ts = _fmt_dt(slot.date_modified or slot.date_created)
-            item.setSizeHint(QSize(0, 34 if compact else 52))
-            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, compact))
+            self.slot_list.setItemWidget(item, _SlotItem(item.data(Qt.UserRole).name))
 
     def _reload_slots(self, select_slot: str = "") -> None:
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
-
-        slots = (
-            storage.load_slots(game_name, profile_name)
-            if game_name and profile_name
-            else []
+        self._slots = (
+            storage.load_sorted_slots(game_name, profile_name,
+                                      self._config.slot_sort, self._config.slot_sort_desc)
+            if game_name and profile_name else []
         )
-
-        sort_mode = self._config.slot_sort
-        desc = self._config.slot_sort_desc
-        if sort_mode == "name":
-            slots.sort(key=lambda s: s.name.lower(), reverse=desc)
-        elif sort_mode == "created":
-            slots.sort(key=lambda s: s.date_created or datetime.min, reverse=desc)
-        elif sort_mode == "modified":
-            slots.sort(key=lambda s: s.date_modified or s.date_created or datetime.min, reverse=desc)
-        elif sort_mode == "custom" and game_name and profile_name:
-            order = storage.load_slot_order(game_name, profile_name)
-            if order:
-                order_map = {name: i for i, name in enumerate(order)}
-                slots.sort(key=lambda s: order_map.get(s.name, len(order)))
-            storage.save_slot_order(game_name, profile_name, [s.name for s in slots])
-
-        is_custom = sort_mode == "custom"
         self.slot_list.setDragDropMode(
-            QAbstractItemView.InternalMove if is_custom else QAbstractItemView.NoDragDrop
+            QAbstractItemView.InternalMove if self._config.slot_sort == "custom"
+            else QAbstractItemView.NoDragDrop
         )
-        self.sort_dir_btn.setEnabled(not is_custom)
 
-        compact = True
-        self._slots = slots
-        self.slot_list.blockSignals(True)
-        self.slot_list.clear()
-        for slot in self._slots:
-            ts = _fmt_dt(slot.date_modified or slot.date_created)
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, slot)
-            item.setSizeHint(QSize(0, 34 if compact else 52))
-            self.slot_list.addItem(item)
-            self.slot_list.setItemWidget(item, _SlotItem(slot.name, ts, compact))
-        self.slot_list.blockSignals(False)
+        with QSignalBlocker(self.slot_list):
+            self.slot_list.clear()
+            for slot in self._slots:
+                item = QListWidgetItem()
+                item.setData(Qt.UserRole, slot)
+                item.setSizeHint(QSize(0, 34))
+                self.slot_list.addItem(item)
+                self.slot_list.setItemWidget(item, _SlotItem(slot.name))
 
         if self._slots:
-            target = 0
-            if select_slot:
-                for i, s in enumerate(self._slots):
-                    if s.name == select_slot:
-                        target = i
-                        break
+            names = [s.name for s in self._slots]
+            target = names.index(select_slot) if select_slot in names else 0
             self.slot_list.setCurrentRow(target)
             self._on_slot_selected(target)
         else:
             self._clear_detail()
+
+    def _selected_slot(self) -> Optional[storage.SaveSlot]:
+        row = self.slot_list.currentRow()
+        return self._slots[row] if 0 <= row < len(self._slots) else None
 
     def _select_next_slot(self) -> None:
         row = self.slot_list.currentRow()
@@ -748,24 +598,21 @@ class MainWindow(QMainWindow):
         self._set_video_url(slot.video_url)
         self.info_created.set_value(_fmt_dt(slot.date_created))
         self.info_modified.set_value(_fmt_dt(slot.date_modified) if slot.date_modified else "—")
-        size = _slot_save_size(slot)
-        self.info_file_size.set_value(_fmt_size(size) if size is not None else "—")
+        files = storage.slot_save_files(slot)
+        self.info_file_size.set_value(_fmt_size(sum(f.stat().st_size for f in files)) if files else "—")
         self._maybe_switch_practice_slot(slot)
         self._sync_ro_button()
         self._refresh_overlay()
 
     def _maybe_switch_practice_slot(self, slot: storage.SaveSlot) -> None:
-        """If Practice Mode is active and a different slot in the same
-        game/profile was just selected, switch protection to it — the guard
-        should follow whatever save is being viewed, not stay pinned to
-        whichever slot was selected at the moment it was turned on."""
+        """While Practice Mode is on, protect whichever slot of the same game is selected."""
         if self._guard_slot is None or self._guard_cfg is None:
             return
         if self._guard_slot.path == slot.path:
             return
         game_cfg = self._get_game_cfg()
         if not game_cfg or game_cfg.name != self._guard_cfg.name:
-            return  # a genuine game switch disables practice mode separately
+            return  # switching game disables practice mode separately
         try:
             storage.load_save(slot, game_cfg, make_backup=False)
         except OSError as e:
@@ -812,7 +659,7 @@ class MainWindow(QMainWindow):
         has_url = bool(url.strip())
         self.clear_video_btn.setEnabled(has_url)
         if has_url:
-            if url.strip() != self._inline_player._url:
+            if url.strip() != self._inline_player.url:
                 self._inline_player.load(url.strip())
             self._inline_player.setVisible(True)
             QTimer.singleShot(50, self.update)
@@ -857,9 +704,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._sync_minimum_size)
 
     def _notify(self, text: str, timeout: int = 0) -> None:
-        """Show a status message, mirrored into the overlay if it's visible —
-        the main window's status bar isn't visible while tabbed into the game
-        with only the overlay showing, so actions there had no feedback."""
+        """Show a status message, mirrored in the overlay while it's visible."""
         self.status_bar.showMessage(text, timeout)
         if self._overlay.isVisible():
             self._overlay.show_message(text)
@@ -871,46 +716,31 @@ class MainWindow(QMainWindow):
     )
 
     def _sync_ro_button(self) -> None:
-        """Reflect Practice Mode's actual global on/off state on the button
-        and status label, regardless of which slot happens to be selected
-        right now. Enabling locks onto whatever slot was selected at that
-        moment, but the toggle itself isn't tied to what's viewed afterwards
-        — switching slots or games while it's on must not make it look off,
-        and disabling must always be possible from anywhere."""
+        """Show Practice Mode's on/off state; it can always be turned off, whatever is selected."""
         is_active = self._guard_slot is not None
-        save_files = _slot_save_files(self._current_slot) if self._current_slot else []
+        save_files = storage.slot_save_files(self._current_slot) if self._current_slot else []
         if is_active:
             self.info_ro_status.set_value("Active")
         elif save_files:
             self.info_ro_status.set_value("Inactive")
         else:
             self.info_ro_status.set_value("—")
-        self.ro_btn.blockSignals(True)
-        self.ro_btn.setChecked(is_active)
+        with QSignalBlocker(self.ro_btn):
+            self.ro_btn.setChecked(is_active)
         self.ro_btn.setText(self._ro_btn_text(is_active))
-        self.ro_btn.blockSignals(False)
         self.ro_btn.setEnabled(not self._run_mode and (is_active or bool(save_files)))
 
     def _on_ro_toggled(self, checked: bool) -> None:
         if self._confirm_dialog is not None and self._confirm_action == "lock":
-            # A confirm for enabling Practice Mode is already pending — most
-            # likely the global hotkey firing again while it's up, since
-            # dialogs aren't focus-scoped. toggle() already flipped `checked`
-            # to the opposite of the original press, which is not a real
-            # "turn it off" intent, so route this through _confirm() itself
-            # (its own dedup clicks Yes on the pending dialog) and put the
-            # button back to match what that original press will apply.
+            # The hotkey was pressed again while the enable confirmation is open:
+            # that means "confirm" (see _confirm), not "turn off".
             self._confirm("lock", "Practice Mode", self._LOCK_CONFIRM_MESSAGE,
                           disable_key="confirm_lock_slot")
-            self.ro_btn.blockSignals(True)
-            self.ro_btn.setChecked(True)
-            self.ro_btn.blockSignals(False)
+            with QSignalBlocker(self.ro_btn):
+                self.ro_btn.setChecked(True)
             return
 
         if not checked:
-            # Disabling isn't tied to whatever slot/game happens to be
-            # selected right now — it just undoes whatever enabling last
-            # armed, so it must work identically from anywhere.
             guard_cfg = self._guard_cfg
             guard_slot = self._guard_slot
             self._guard_slot = None
@@ -931,7 +761,6 @@ class MainWindow(QMainWindow):
             self._notify(f"'{label}' — practice mode is off — save restored.")
             return
 
-        # Enabling does need a real selected slot with save files to load.
         if self._run_mode:
             self._sync_ro_button()
             self._notify("Run mode is on — disable it before using Practice Mode.")
@@ -939,15 +768,9 @@ class MainWindow(QMainWindow):
         warning_shown = False
         if not self._config.protect_warning_acknowledged and not self._protect_warning_shown:
             if self._protect_warning_open:
-                # The warning is already up and waiting on a decision (most
-                # likely the global hotkey firing again while it's open,
-                # since it isn't focus-scoped). Unlike _confirm(), this
-                # dialog has no "press again to accept" semantics, so just
-                # undo the reentrant toggle rather than let it desync the
-                # button from what the pending call will actually apply.
-                self.ro_btn.blockSignals(True)
-                self.ro_btn.setChecked(True)
-                self.ro_btn.blockSignals(False)
+                # Hotkey pressed again while the warning is open; ignore it.
+                with QSignalBlocker(self.ro_btn):
+                    self.ro_btn.setChecked(True)
                 return
             if self._overlay.isVisible():
                 self._notify("Check the main window — a one-time Practice Mode warning needs your attention.")
@@ -973,7 +796,7 @@ class MainWindow(QMainWindow):
             self._sync_ro_button()
             self._notify("No slot selected.")
             return
-        save_files = _slot_save_files(self._current_slot)
+        save_files = storage.slot_save_files(self._current_slot)
         if not save_files:
             self._sync_ro_button()
             return
@@ -1004,7 +827,7 @@ class MainWindow(QMainWindow):
         self._notify(f"'{label}' — practice mode is on.")
 
     def _show_protect_warning(self) -> bool:
-        """Show the protect-save warning. Returns True if the user confirmed, False if cancelled."""
+        """Show the one-time Practice Mode warning. Returns whether the user confirmed."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Practice Mode — heads up")
         dlg.setMinimumWidth(420)
@@ -1040,8 +863,7 @@ class MainWindow(QMainWindow):
         def _on_confirm():
             if never_checkbox.isChecked():
                 self._config.protect_warning_acknowledged = True
-                import config as _cfg_mod
-                _cfg_mod.save_config(self._config)
+                config.save_config(self._config)
             else:
                 self._protect_warning_shown = True
             dlg.accept()
@@ -1052,9 +874,9 @@ class MainWindow(QMainWindow):
     def _on_guarded_file_changed(self, path: str) -> None:
         if self._guard_slot is None or self._guard_cfg is None:
             return
-        # Remove the path now so our own restore write doesn't re-trigger this handler
+        # Stop watching so our own restore doesn't retrigger this, and give the
+        # game time to finish writing before restoring.
         self._guard_watcher.removePath(path)
-        # Delay the restore so the game has time to finish its write and close the file
         QTimer.singleShot(500, lambda: self._do_guard_restore(path))
 
     def _do_guard_restore(self, path: str) -> None:
@@ -1066,7 +888,6 @@ class MainWindow(QMainWindow):
         except OSError as e:
             logger.exception("Lock restore failed: slot=%r path=%s", self._guard_slot.name, path)
             self._notify(f"Lock: restore failed — {e}")
-        # Re-add after our write is done so the next game save is caught
         self._guard_watcher.addPath(path)
 
     def _on_import_save(self) -> None:
@@ -1078,7 +899,7 @@ class MainWindow(QMainWindow):
             self._notify("No profile selected.")
             return
         if self._config.auto_name_imports:
-            name = storage.auto_slot_name(self.game_combo.currentText(), profile)
+            name = storage.auto_slot_name(cfg.name, profile)
         else:
             name, ok = QInputDialog.getText(self, "Import Save", "Slot name:")
             if not ok or not name.strip():
@@ -1088,30 +909,30 @@ class MainWindow(QMainWindow):
             except ValueError as e:
                 self._notify(str(e))
                 return
-        slot_dir = storage.SAVES_DIR / self.game_combo.currentText() / profile / name
-        if slot_dir.exists():
+        self._import_as(cfg, profile, name)
+
+    def _import_as(self, cfg: storage.GameConfig, profile: str, name: str) -> bool:
+        """Import the live save as a new slot and select it. Returns whether it succeeded."""
+        if (storage.SAVES_DIR / cfg.name / profile / name).exists():
             self._notify(f"A slot named '{name}' already exists.")
-            return
+            return False
         try:
-            storage.import_save(self.game_combo.currentText(), profile, name, cfg)
+            storage.import_save(cfg.name, profile, name, cfg)
         except Exception as e:
-            logger.exception("Import save failed: game=%r profile=%r slot=%r",
-                             self.game_combo.currentText(), profile, name)
+            logger.exception("Import save failed: game=%r profile=%r slot=%r", cfg.name, profile, name)
             self._notify(f"Import failed: {e}")
-            return
+            return False
         self._reload_slots(name)
         self._notify(f"Imported '{name}'.")
+        return True
 
     def _confirm(self, action: str, title: str, message: str,
                  disable_key: Optional[str] = None) -> bool:
-        """Show a Yes/No dialog, allowing the same hotkey to confirm it.
+        """Show a Yes/No dialog that the same hotkey can confirm.
 
-        If a dialog for the same action is already open, accepts it and returns
-        False (the first pending call will proceed). If a *different* dialog is
-        open, does nothing and returns False.
-
-        If disable_key is provided, a "Don't ask again" checkbox is shown. When
-        checked on confirm, the corresponding Config field is set to False and saved.
+        If a dialog for the same action is already open, this accepts it and returns
+        False (the pending call proceeds). If disable_key is given, a "Don't ask again"
+        checkbox sets that Config field to False.
         """
         if self._confirm_dialog is not None:
             if self._confirm_action == action:
@@ -1145,14 +966,13 @@ class MainWindow(QMainWindow):
         return confirmed
 
     def _on_replace_save(self) -> None:
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
+        slot = self._selected_slot()
+        if slot is None:
             self._notify("No slot selected.")
             return
         cfg = self._get_game_cfg()
         if not cfg or not self._validate_game_save_path(cfg):
             return
-        slot = self._slots[row]
         if self._guard_slot is not None and self._guard_slot.path == slot.path:
             self._notify(f"'{slot.name}' has practice mode active — disable it before replacing.")
             return
@@ -1161,7 +981,6 @@ class MainWindow(QMainWindow):
                                  f"Overwrite '{slot.name}' with the current game save?\n\nThis cannot be undone.",
                                  disable_key="confirm_replace"):
                 return
-        slot_name = slot.name
         try:
             storage.replace_save(slot, cfg)
         except Exception as e:
@@ -1169,21 +988,20 @@ class MainWindow(QMainWindow):
                              slot.game, slot.profile, slot.name)
             self._notify(f"Replace failed: {e}")
             return
-        self._reload_slots(slot_name)
-        self._notify(f"Replaced '{slot_name}'.")
+        self._reload_slots(slot.name)
+        self._notify(f"Replaced '{slot.name}'.")
 
     def _on_load_save(self) -> None:
         if self._run_mode:
             self._notify("Run mode is on — disable it before loading a save.")
             return
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
+        slot = self._selected_slot()
+        if slot is None:
             self._notify("No slot selected.")
             return
         cfg = self._get_game_cfg()
         if not cfg or not self._validate_game_save_path(cfg):
             return
-        slot = self._slots[row]
         try:
             storage.load_save(slot, cfg)
         except Exception as e:
@@ -1192,10 +1010,9 @@ class MainWindow(QMainWindow):
             self._notify(f"Load failed: {e}")
             return
 
-        # If protection is active, re-point the guard at the newly loaded slot
+        # Practice Mode now protects the slot that was just loaded.
         if self._guard_cfg is not None and self._guard_cfg.name == cfg.name:
             self._guard_slot = slot
-            # Watcher paths stay the same (same game, same live files)
 
         self._notify(f"Loaded '{slot.name}' to game save.")
 
@@ -1222,15 +1039,12 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Delete failed: {e}")
             return
         self._slots.pop(row)
-        self.slot_list.blockSignals(True)
-        self.slot_list.takeItem(row)
-        self.slot_list.blockSignals(False)
+        with QSignalBlocker(self.slot_list):
+            self.slot_list.takeItem(row)
+            if self._slots:
+                self.slot_list.setCurrentRow(min(row, len(self._slots) - 1))
         if self._slots:
-            new_row = min(row, len(self._slots) - 1)
-            self.slot_list.blockSignals(True)
-            self.slot_list.setCurrentRow(new_row)
-            self.slot_list.blockSignals(False)
-            self._on_slot_selected(new_row)
+            self._on_slot_selected(self.slot_list.currentRow())
         else:
             self._clear_detail()
         self.status_bar.showMessage(f"{'Moved to trash' if soft else 'Deleted'}: '{slot.name}'.")
@@ -1244,21 +1058,13 @@ class MainWindow(QMainWindow):
         self._flush_notes()
         self._flush_video()
         self._current_slot = None
-        profiles = storage.load_profiles(game)
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.clear()
-        for p in profiles:
-            self.profile_combo.addItem(p)
-        self.profile_combo.blockSignals(False)
-        idx = self.profile_combo.findText(previous)
-        self.profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._reload_profiles(previous)
         self._reload_slots()
 
     def _on_rename_slot(self) -> None:
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
+        slot = self._selected_slot()
+        if slot is None:
             return
-        slot = self._slots[row]
         name, ok = QInputDialog.getText(self, "Rename slot", "New name:", text=slot.name)
         if not ok or not name.strip() or name.strip() == slot.name:
             return
@@ -1266,20 +1072,16 @@ class MainWindow(QMainWindow):
 
     def _rename_current_slot(self, name: str) -> bool:
         """Rename the selected slot and return whether a rename occurred."""
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
-            return False
-        slot = self._slots[row]
+        slot = self._selected_slot()
         name = name.strip()
-        if not name or name == slot.name:
+        if slot is None or not name or name == slot.name:
             return False
         try:
             name = storage.validate_entry_name(name)
         except ValueError as e:
             self._notify(str(e))
             return False
-        # On case-insensitive filesystems (Windows, macOS), "hippo" -> "Hippo"
-        # would otherwise look like a collision with itself.
+        # Allow case-only renames on case-insensitive filesystems.
         if name.lower() != slot.name.lower() and (slot.path.parent / name).exists():
             self._notify(f"A slot named '{name}' already exists.")
             return False
@@ -1292,8 +1094,7 @@ class MainWindow(QMainWindow):
             return False
         game_name = self.game_combo.currentText()
         profile_name = self.profile_combo.currentText()
-        # Keep order.json in sync whenever it already exists, so the renamed slot
-        # stays in position even if the user is not currently in Custom sort mode.
+        # Keep the slot's position in the custom order, even if another sort is active.
         if self._config.slot_sort == "custom" or storage.load_slot_order(game_name, profile_name):
             storage.save_slot_order(game_name, profile_name, [s.name for s in self._slots])
         self._reload_slots(name)
@@ -1301,12 +1102,10 @@ class MainWindow(QMainWindow):
         return True
 
     def _begin_overlay_text_entry(self, initial_text: str) -> bool:
-        """Shared setup for both overlay text prompts: show the inline editor
-        and start the suppressed global listener. Returns whether it started."""
+        """Show the overlay's name editor and start capturing keystrokes for it."""
         self._overlay.begin_rename(initial_text)
-        # The text listener suppresses keystrokes on Windows. Stop the action
-        # listener first so it does not miss the trigger key's release event
-        # and get stuck considering it held down.
+        # Stop the action hotkeys first: the text listener suppresses keystrokes on
+        # Windows, so they'd miss the trigger key's release and think it's held.
         self._overlay_action_hotkeys.stop()
         if self._overlay_rename_input.start(initial_text):
             return True
@@ -1316,15 +1115,12 @@ class MainWindow(QMainWindow):
         return False
 
     def _begin_overlay_rename(self) -> None:
-        row = self.slot_list.currentRow()
-        if 0 <= row < len(self._slots):
+        if slot := self._selected_slot():
             self._overlay_text_mode = "rename"
-            self._begin_overlay_text_entry(self._slots[row].name)
+            self._begin_overlay_text_entry(slot.name)
 
     def _on_overlay_import_triggered(self) -> None:
-        """Overlay's Import hotkey: skip straight to importing when auto-naming
-        is on (same as the main window), otherwise prompt in the overlay
-        itself rather than popping the main window's dialog."""
+        """Import directly when auto-naming, otherwise ask for the name in the overlay."""
         if self._config.auto_name_imports:
             self._on_import_save()
             return
@@ -1346,22 +1142,22 @@ class MainWindow(QMainWindow):
     def _on_overlay_rename_requested(self, name: str) -> None:
         self._overlay_rename_input.stop()
         name = name.strip()
-        row = self.slot_list.currentRow()
-        if not name or (0 <= row < len(self._slots) and name == self._slots[row].name):
+        slot = self._selected_slot()
+        if not name or (slot is not None and name == slot.name):
             self._finish_overlay_text_entry()
             return
         if self._rename_current_slot(name):
             self._finish_overlay_text_entry()
             self._refresh_overlay()
         elif self._overlay.isVisible():
-            # Keep the field open after a validation or filesystem error so the
-            # player can correct the name without returning to the main window.
-            self._overlay_rename_input.start(name)
+            self._overlay_rename_input.start(name)  # keep the prompt open to fix the name
 
     def _on_overlay_import_requested(self, name: str) -> None:
         self._overlay_rename_input.stop()
         name = name.strip()
-        if not name:
+        cfg = self._get_game_cfg()
+        profile = self.profile_combo.currentText()
+        if not name or not cfg or not profile:
             self._finish_overlay_text_entry()
             return
         try:
@@ -1371,30 +1167,11 @@ class MainWindow(QMainWindow):
             if self._overlay.isVisible():
                 self._overlay_rename_input.start(name)
             return
-        cfg = self._get_game_cfg()
-        game_name = self.game_combo.currentText()
-        profile = self.profile_combo.currentText()
-        if not cfg or not profile:
+        if self._import_as(cfg, profile, name) or not self._overlay.isVisible():
             self._finish_overlay_text_entry()
-            return
-        slot_dir = storage.SAVES_DIR / game_name / profile / name
-        if slot_dir.exists():
-            self._notify(f"A slot named '{name}' already exists.")
-            if self._overlay.isVisible():
-                self._overlay_rename_input.start(name)
-            return
-        try:
-            storage.import_save(game_name, profile, name, cfg)
-        except Exception as e:
-            logger.exception("Import save failed (overlay): game=%r profile=%r slot=%r",
-                             game_name, profile, name)
-            self._notify(f"Import failed: {e}")
-            self._finish_overlay_text_entry()
-            return
-        self._finish_overlay_text_entry()
-        self._reload_slots(name)
-        self._refresh_overlay()
-        self._notify(f"Imported '{name}'.")
+            self._refresh_overlay()
+        else:
+            self._overlay_rename_input.start(name)
 
     def _cancel_overlay_text_entry(self) -> None:
         self._overlay_rename_input.stop()
@@ -1427,15 +1204,10 @@ class MainWindow(QMainWindow):
         menu.exec(self.slot_list.mapToGlobal(pos))
 
     def _on_duplicate_slot(self) -> None:
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
+        slot = self._selected_slot()
+        if slot is None:
             return
-        slot = self._slots[row]
-        new_name = storage.duplicate_slot_name(
-            self.game_combo.currentText(),
-            self.profile_combo.currentText(),
-            slot.name,
-        )
+        new_name = storage.duplicate_slot_name(slot.game, slot.profile, slot.name)
         try:
             storage.duplicate_slot(slot, new_name)
         except Exception as e:
@@ -1447,15 +1219,11 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Duplicated as '{new_name}'.")
 
     def _on_copy_to_profile(self, move: bool = False) -> None:
-        row = self.slot_list.currentRow()
-        if row < 0 or row >= len(self._slots):
+        slot = self._selected_slot()
+        if slot is None:
             return
-        slot = self._slots[row]
-        game = self.game_combo.currentText()
-        current_profile = self.profile_combo.currentText()
-
-        all_profiles = storage.load_profiles(game)
-        other_profiles = [p for p in all_profiles if p != current_profile]
+        game = slot.game
+        other_profiles = [p for p in storage.load_profiles(game) if p != slot.profile]
         if not other_profiles:
             self.status_bar.showMessage("No other profiles exist for this game.")
             return
@@ -1482,7 +1250,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"{verb} failed: {e}")
             return
 
-        slot_name = slot.name
         if move:
             self._flush_notes()
             self._flush_video()
@@ -1491,25 +1258,21 @@ class MainWindow(QMainWindow):
                 storage.delete_slot(slot, soft=self._config.soft_delete)
             except Exception as e:
                 logger.exception("Move: delete after copy failed: game=%r %r/%r -> %r",
-                                 slot.game, current_profile, slot_name, target_profile)
+                                 slot.game, slot.profile, slot.name, target_profile)
                 self.status_bar.showMessage(f"Copy succeeded but delete failed: {e}")
                 return
             self._reload_slots()
-            self.status_bar.showMessage(
-                f"Moved '{slot_name}' to profile '{target_profile}'."
-            )
+            self.status_bar.showMessage(f"Moved '{slot.name}' to profile '{target_profile}'.")
         else:
-            self.status_bar.showMessage(
-                f"Copied '{slot_name}' to profile '{target_profile}'"
-                + (f" as '{new_name}'." if new_name != slot_name else ".")
-            )
+            suffix = f" as '{new_name}'." if new_name != slot.name else "."
+            self.status_bar.showMessage(f"Copied '{slot.name}' to profile '{target_profile}'{suffix}")
 
     def _on_run_mode_toggled(self, on: bool) -> None:
         self._run_mode = on
         self.load_btn.setEnabled(not on)
         if on:
             if self.ro_btn.isChecked():
-                self.ro_btn.setChecked(False)  # triggers _on_ro_toggled(False), which disables it properly
+                self.ro_btn.setChecked(False)
             self._sync_ro_button()
             self._run_backup_timer.start()
             self._on_run_backup_tick()
@@ -1567,24 +1330,19 @@ class MainWindow(QMainWindow):
     def _stop_main_hotkeys(self) -> None:
         self._global_hotkeys.stop()
         self._global_hotkeys_started = False
-        for sc in getattr(self, "_shortcuts", []):
+        for sc in self._shortcuts:
             sc.setEnabled(False)
 
     def _suspend_hotkeys(self) -> None:
-        """Stop all global listeners and disable in-app shortcuts so pressing an
-        existing hotkey while recording a new one in Settings doesn't trigger it."""
+        """Disable every hotkey, so pressing one while recording it in Settings does nothing."""
         self._stop_main_hotkeys()
         self._overlay_toggle_hotkey.stop()
         self._overlay_action_hotkeys.stop()
-        toggle_sc = getattr(self, "_overlay_toggle_shortcut", None)
-        if toggle_sc is not None:
-            toggle_sc.setEnabled(False)
+        if self._overlay_toggle_shortcut is not None:
+            self._overlay_toggle_shortcut.setEnabled(False)
 
     def _restore_hotkeys(self) -> None:
-        """Restart whichever hotkey set should currently be active (main window or
-        overlay), plus the always-on overlay-toggle hotkey. Use this instead of
-        _apply_hotkeys() after anything that called _suspend_hotkeys(), so the
-        overlay's own hotkeys aren't clobbered by the main window's while it's shown."""
+        """Re-enable hotkeys after _suspend_hotkeys(), respecting the overlay's state."""
         if self._overlay.isVisible():
             self._sync_overlay_focus_hotkeys()
         else:
@@ -1592,21 +1350,16 @@ class MainWindow(QMainWindow):
         self._apply_overlay_toggle_hotkey()
 
     def _sync_overlay_focus_hotkeys(self) -> None:
-        """While the overlay is open, keep exactly one action-hotkey set live at a
-        time: the main window's own hotkeys while the manager itself is focused,
-        or the overlay's global hotkeys while focus is elsewhere (typically the
-        game, or the manager minimized). Both sets default to the same keys
-        (F5/F9/F6/...), and pynput's global listener ignores focus entirely, so
-        running both together would fire an action twice on a single keypress.
+        """While the overlay is shown, use the main hotkeys when this window is focused
+        and the overlay's global hotkeys otherwise, never both.
 
-        isMinimized() is checked explicitly because minimizing doesn't always
-        raise ActivationChange on its own — without this, minimizing while the
-        overlay was focused left the main-window hotkeys stuck on, and the
-        overlay's hotkeys never took over."""
+        Both sets default to the same keys and pynput ignores focus, so running
+        both would fire each action twice.
+        """
         if not self._overlay.isVisible():
             return
-        main_focused = self.isActiveWindow() and not self.isMinimized()
-        if main_focused:
+        # Minimizing doesn't always send an ActivationChange, so check it explicitly.
+        if self.isActiveWindow() and not self.isMinimized():
             self._overlay_action_hotkeys.stop()
             self._apply_hotkeys()
         else:
@@ -1618,33 +1371,49 @@ class MainWindow(QMainWindow):
         if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             self._sync_overlay_focus_hotkeys()
 
+    def _on_main_hotkey(self, action: str) -> None:
+        self._main_actions[action]()
+
+    def _on_overlay_hotkey(self, action: str) -> None:
+        self._overlay_actions[action]()
+
+    def _main_hotkeys(self) -> dict[str, str]:
+        cfg = self._config
+        return {
+            "import": cfg.hotkey_import,
+            "load": cfg.hotkey_load,
+            "replace": cfg.hotkey_replace,
+            "ro_toggle": cfg.hotkey_ro_toggle,
+            "next_slot": cfg.hotkey_next_slot,
+            "prev_slot": cfg.hotkey_prev_slot,
+        }
+
+    def _overlay_hotkeys(self) -> dict[str, str]:
+        cfg = self._config
+        return {
+            "import": cfg.overlay_hotkey_import,
+            "load": cfg.overlay_hotkey_load,
+            "replace": cfg.overlay_hotkey_replace,
+            "rename": cfg.overlay_hotkey_rename,
+            "ro_toggle": cfg.overlay_hotkey_ro_toggle,
+            "next_slot": cfg.overlay_hotkey_next_slot,
+            "prev_slot": cfg.overlay_hotkey_prev_slot,
+        }
+
     def _apply_overlay_toggle_hotkey(self) -> None:
-        sc = getattr(self, "_overlay_toggle_shortcut", None)
-        if sc is not None:
-            sc.setEnabled(False)
-            sc.deleteLater()
+        if self._overlay_toggle_shortcut is not None:
+            self._overlay_toggle_shortcut.setEnabled(False)
+            self._overlay_toggle_shortcut.deleteLater()
             self._overlay_toggle_shortcut = None
 
-        started = self._overlay_toggle_hotkey.start(
-            "", "", "", "", "", "",
-            hotkey_toggle_overlay=self._config.hotkey_toggle_overlay,
-            enabled=True,
-        )
-        if not started and self._config.hotkey_toggle_overlay:
-            # pynput unavailable/untrusted — fall back to a local shortcut (only
-            # works while the main window has focus, unlike the global listener).
-            sc = QShortcut(QKeySequence(self._config.hotkey_toggle_overlay), self)
-            sc.activated.connect(self._toggle_overlay)
-            self._overlay_toggle_shortcut = sc
+        key = self._config.hotkey_toggle_overlay
+        if not self._overlay_toggle_hotkey.start({"toggle_overlay": key}) and key:
+            # No global hotkeys available; fall back to a shortcut that works while focused.
+            self._overlay_toggle_shortcut = QShortcut(QKeySequence(key), self)
+            self._overlay_toggle_shortcut.activated.connect(self._toggle_overlay)
 
     def _start_overlay_action_hotkeys(self) -> None:
-        cfg = self._config
-        self._overlay_action_hotkeys.start(
-            cfg.overlay_hotkey_import, cfg.overlay_hotkey_load, cfg.overlay_hotkey_replace,
-            cfg.overlay_hotkey_ro_toggle, cfg.overlay_hotkey_next_slot, cfg.overlay_hotkey_prev_slot,
-            hotkey_rename=cfg.overlay_hotkey_rename,
-            enabled=True,
-        )
+        self._overlay_action_hotkeys.start(self._overlay_hotkeys())
 
     def _toggle_overlay(self) -> None:
         if self._overlay.isVisible():
@@ -1669,26 +1438,27 @@ class MainWindow(QMainWindow):
 
     def _overlay_hotkeys_line(self) -> str:
         cfg = self._config
-        parts: list[str] = []
-
-        def _add(label: str, key: str) -> None:
-            hk = _hotkey_label(key)
-            if hk:
-                parts.append(f"{label} {hk}")
-
-        _add("Import", cfg.overlay_hotkey_import)
-        _add("Load", cfg.overlay_hotkey_load)
-        _add("Replace", cfg.overlay_hotkey_replace)
-        _add("Rename", cfg.overlay_hotkey_rename)
-        _add("Practice", cfg.overlay_hotkey_ro_toggle)
+        labels = [
+            ("Import", cfg.overlay_hotkey_import),
+            ("Load", cfg.overlay_hotkey_load),
+            ("Replace", cfg.overlay_hotkey_replace),
+            ("Rename", cfg.overlay_hotkey_rename),
+            ("Practice", cfg.overlay_hotkey_ro_toggle),
+        ]
+        parts = [f"{label} {_hotkey_label(key)}" for label, key in labels if key]
 
         prev_hk = _hotkey_label(cfg.overlay_hotkey_prev_slot)
         next_hk = _hotkey_label(cfg.overlay_hotkey_next_slot)
-        if prev_hk or next_hk:
-            nav = " ".join(s for s in (f"▲ {prev_hk}" if prev_hk else "", f"{next_hk} ▼" if next_hk else "") if s)
-            parts.append(nav)
+        nav = []
+        if prev_hk:
+            nav.append(f"▲ {prev_hk}")
+        if next_hk:
+            nav.append(f"{next_hk} ▼")
+        if nav:
+            parts.append(" ".join(nav))
 
-        _add("Hide", cfg.hotkey_toggle_overlay)
+        if cfg.hotkey_toggle_overlay:
+            parts.append(f"Hide {_hotkey_label(cfg.hotkey_toggle_overlay)}")
         return "   ".join(parts)
 
     def _refresh_overlay(self) -> None:
@@ -1709,9 +1479,8 @@ class MainWindow(QMainWindow):
         config.save_config(self._config)
 
     def _set_companion_enabled_live(self, enabled: bool) -> str:
-        """Settings-dialog callback: apply the companion checkbox immediately
-        (start/stop the server and persist just this setting) instead of
-        waiting for Save. Returns the pairing code for the dialog to show."""
+        """Settings callback: start/stop the server and save just this setting.
+        Returns the pairing code."""
         self._config.companion_enabled = enabled
         if enabled and not self._config.companion_token:
             self._config.companion_token = api_server.generate_pair_code()
@@ -1720,9 +1489,7 @@ class MainWindow(QMainWindow):
         return self._config.companion_token
 
     def _mark_companion_notice_shown(self) -> None:
-        """Settings-dialog callback: persist that the firewall heads-up has
-        been shown, so it never appears again after the first time — this
-        must survive even if the dialog is then closed without Save."""
+        """Settings callback: saved immediately so it sticks even if Settings is cancelled."""
         self._config.companion_firewall_notice_shown = True
         config.save_config(self._config)
 
@@ -1743,45 +1510,24 @@ class MainWindow(QMainWindow):
             self._companion.stop()
 
     def _on_remote_saves_changed(self) -> None:
-        """A phone loaded, imported, or otherwise changed saves/profiles;
-        refresh what we're showing."""
-        game_name = self.game_combo.currentText()
-        if game_name:
-            previous_profile = self.profile_combo.currentText()
-            profiles = storage.load_profiles(game_name)
-            self.profile_combo.blockSignals(True)
-            self.profile_combo.clear()
-            for p in profiles:
-                self.profile_combo.addItem(p)
-            self.profile_combo.blockSignals(False)
-            idx = self.profile_combo.findText(previous_profile)
-            self.profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._reload_slots(self._current_slot.name if self._current_slot else "")
+        self._reload_profiles(self.profile_combo.currentText())
+        self._reload_slots(self._current_slot_name())
         self._refresh_overlay()
         self.status_bar.showMessage("Saves updated from companion app.", 4000)
 
     def _on_remote_sort_changed(self, mode: str, desc: bool) -> None:
-        """A phone changed the slot sort; the server already saved it to
-        config on disk. Sync our in-memory config and widgets, then re-sort."""
+        """The server already saved the new sort to disk; mirror it here."""
         self._config.slot_sort = mode
         self._config.slot_sort_desc = desc
-        label = {"modified": "Modified", "created": "Created",
-                 "name": "Name", "custom": "Custom"}.get(mode, "Modified")
-        self.sort_combo.blockSignals(True)
-        self.sort_combo.setCurrentText(label)
-        self.sort_combo.blockSignals(False)
-        self.sort_dir_btn.setIcon(
-            self._icon_sort_desc if desc else self._icon_sort_asc
-        )
-        self.sort_dir_btn.setEnabled(mode != "custom")
-        self._reload_slots(self._current_slot.name if self._current_slot else "")
+        self._sync_sort_widgets()
+        self._reload_slots(self._current_slot_name())
         self.status_bar.showMessage("Sort changed from companion app.", 4000)
 
     def _on_open_settings(self) -> None:
         self._suspend_hotkeys()
         prev_game = self.game_combo.currentText()
         prev_profile = self.profile_combo.currentText()
-        prev_slot = self._current_slot.name if self._current_slot else ""
+        prev_slot = self._current_slot_name()
 
         self._games = storage.load_games()
         dlg = SettingsDialog(self._config, self._games, self,
@@ -1802,61 +1548,22 @@ class MainWindow(QMainWindow):
                 storage.deactivate_game(name)
         logger.info("Settings saved by user")
 
-        self.game_combo.blockSignals(True)
-        self.game_combo.clear()
-        for game in self._games:
-            self.game_combo.addItem(game.name)
-        self.game_combo.blockSignals(False)
-
-        if self._games:
-            game_idx = max(0, self.game_combo.findText(prev_game))
-            self.game_combo.setCurrentIndex(game_idx)
-
-            game_name = self.game_combo.currentText()
-            profiles = storage.load_profiles(game_name)
-            self.profile_combo.blockSignals(True)
-            self.profile_combo.clear()
-            for p in profiles:
-                self.profile_combo.addItem(p)
-            self.profile_combo.blockSignals(False)
-
-            if profiles:
-                profile_idx = max(0, self.profile_combo.findText(prev_profile))
-                self.profile_combo.setCurrentIndex(profile_idx)
-
-            game_cfg = self._get_game_cfg()
-            self.info_save_path.setVisible(not self._config.hide_paths)
-            self.info_save_path.set_value(_game_path_display(game_cfg))
-
-            self._reload_slots(prev_slot)
-        else:
-            self.profile_combo.blockSignals(True)
-            self.profile_combo.clear()
-            self.profile_combo.blockSignals(False)
-            self._reload_slots()
-
+        self._load_data(prev_game, prev_profile, prev_slot)
+        if self.game_combo.currentText() != prev_game:
+            self._disable_practice_mode_for_context_switch()
         self._apply_info_panel()
         self._restore_hotkeys()
         self._apply_companion_server()
         self.status_bar.showMessage("Settings saved.")
 
     def _ro_btn_text(self, is_on: bool) -> str:
-        key = _hotkey_label(self._config.hotkey_ro_toggle)
-        if is_on:
-            return _btn_text("Practicing", key)
-        return _btn_text("Practice Mode", key)
+        return _btn_text("Practicing" if is_on else "Practice Mode", self._config.hotkey_ro_toggle)
 
     def _apply_hotkeys(self) -> None:
-        for sc in getattr(self, "_shortcuts", []):
+        for sc in self._shortcuts:
             sc.setEnabled(False)
             sc.deleteLater()
-        self._shortcuts: list[QShortcut] = []
-
-        def _bind(key: str, slot) -> None:
-            if key:
-                sc = QShortcut(QKeySequence(key), self)
-                sc.activated.connect(slot)
-                self._shortcuts.append(sc)
+        self._shortcuts = []
 
         cfg = self._config
         self.import_btn.setText(_btn_text("Import Save", cfg.hotkey_import))
@@ -1864,36 +1571,31 @@ class MainWindow(QMainWindow):
         self.replace_btn.setText(_btn_text("Replace Save", cfg.hotkey_replace))
         self.ro_btn.setText(self._ro_btn_text(self.ro_btn.isChecked()))
 
-        started = self._global_hotkeys.start(
-            cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle,
-            cfg.hotkey_next_slot, cfg.hotkey_prev_slot,
-            enabled=cfg.global_hotkeys_enabled,
-        )
+        hotkeys = self._main_hotkeys()
+        started = cfg.global_hotkeys_enabled and self._global_hotkeys.start(hotkeys)
         self._global_hotkeys_started = started
-        if not started:
-            # pynput unavailable (e.g. macOS without Accessibility permission) or global hotkeys
-            # disabled — fall back to in-app QShortcuts. When pynput IS running it fires on both
-            # focused and unfocused presses, so QShortcuts must not be added or they double-trigger.
-            _bind(cfg.hotkey_import, self._on_import_save)
-            _bind(cfg.hotkey_load, self._on_load_save)
-            _bind(cfg.hotkey_replace, self._on_replace_save)
-            _bind(cfg.hotkey_ro_toggle, self.ro_btn.toggle)
-            _bind(cfg.hotkey_next_slot, self._select_next_slot)
-            _bind(cfg.hotkey_prev_slot, self._select_prev_slot)
-            global_keys = [cfg.hotkey_import, cfg.hotkey_load, cfg.hotkey_replace, cfg.hotkey_ro_toggle]
-            if cfg.global_hotkeys_enabled and any(global_keys):
-                if is_wayland_session():
-                    msg = "Global hotkeys aren't supported under Wayland (SteamOS) — using in-app shortcuts while focused."
-                else:
-                    msg = "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart."
-                self.status_bar.showMessage(msg, 6000)
+        if started:
+            return
+
+        # Fall back to in-app shortcuts. Never add them alongside the global
+        # listener, which also fires while focused, or actions double-trigger.
+        self._global_hotkeys.stop()
+        for action, key in hotkeys.items():
+            if key:
+                sc = QShortcut(QKeySequence(key), self)
+                sc.activated.connect(self._main_actions[action])
+                self._shortcuts.append(sc)
+        if cfg.global_hotkeys_enabled and any(hotkeys.values()):
+            if is_wayland_session():
+                msg = "Global hotkeys aren't supported under Wayland (SteamOS) — using in-app shortcuts while focused."
+            else:
+                msg = "Global hotkeys unavailable — grant Accessibility permission in System Settings and restart."
+            self.status_bar.showMessage(msg, 6000)
 
     def eventFilter(self, obj, event) -> bool:
-        # When the pynput global listener is running it fires on every press of the
-        # configured key regardless of focus. If that key is also one of slot_list's
-        # own built-in navigation keys (Up/Down/PageUp/PageDown/Home/End), the list
-        # would move the selection itself *and* the global hotkey would move it again,
-        # skipping a slot. Swallow the key here so only the hotkey signal drives it.
+        # If next/prev slot are bound to the list's own navigation keys (e.g. Up/Down),
+        # the global hotkey and the list would both move the selection. Let only the
+        # hotkey handle it.
         if obj is self.slot_list and event.type() == QEvent.Type.KeyPress and self._global_hotkeys_started:
             seq = QKeySequence(event.keyCombination()).toString()
             if seq and seq in (self._config.hotkey_next_slot, self._config.hotkey_prev_slot):
@@ -1949,7 +1651,7 @@ class MainWindow(QMainWindow):
         logger.info("Application closing: game=%r profile=%r slot=%r",
                     self.game_combo.currentText(),
                     self.profile_combo.currentText(),
-                    self._current_slot.name if self._current_slot else "")
+                    self._current_slot_name())
         self._run_backup_timer.stop()
         self._companion.stop()
         self._global_hotkeys.stop()
@@ -1961,25 +1663,18 @@ class MainWindow(QMainWindow):
         self._flush_video()
         self._config.last_game = self.game_combo.currentText()
         self._config.last_profile = self.profile_combo.currentText()
-        self._config.last_slot = self._current_slot.name if self._current_slot else ""
+        self._config.last_slot = self._current_slot_name()
         self._config.window_width = self.width()
         self._config.window_height = self.height()
         config.save_config(self._config)
         super().closeEvent(event)
 
-    def _stub(self, action: str):
-        def handler():
-            self.status_bar.showMessage(f"[stub] {action} — not yet implemented.")
-        return handler
-
-    def apply_stylesheet(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        stylesheet_path = os.path.join(script_dir, 'main_window.qtt')
+    def apply_stylesheet(self) -> None:
+        path = _UI_DIR / "main_window.qtt"
         try:
-            with open(stylesheet_path, 'r') as f:
-                self.setStyleSheet(f.read())
+            self.setStyleSheet(path.read_text())
         except FileNotFoundError:
-            logger.warning("Stylesheet not found: %s", stylesheet_path)
+            logger.warning("Stylesheet not found: %s", path)
 
 
 def _game_path_display(cfg: Optional[storage.GameConfig]) -> str:
@@ -1991,19 +1686,8 @@ def _game_path_display(cfg: Optional[storage.GameConfig]) -> str:
     return cfg.save_path or "—"
 
 
-def _slot_save_files(slot: storage.SaveSlot) -> list[Path]:
-    """Return all save files for a slot, regardless of save mode."""
-    save_data = slot.path / "save_data"
-    if save_data.exists():
-        return [f for f in save_data.rglob("*") if f.is_file()]
-    return [
-        f for f in slot.path.iterdir()
-        if f.is_file() and f.name not in storage._RESERVED and not f.name.startswith(".")
-    ]
-
-
 def _live_game_files(game_cfg: storage.GameConfig) -> list[Path]:
-    """Return the game's live save paths that should be watched for protection."""
+    """The live save files that Practice Mode watches."""
     if game_cfg.save_mode == "file":
         return [Path(game_cfg.save_path)]
     if game_cfg.save_mode == "files":
@@ -2013,17 +1697,6 @@ def _live_game_files(game_cfg: storage.GameConfig) -> list[Path]:
         if folder.exists():
             return [f for f in folder.rglob("*") if f.is_file()]
     return []
-
-
-def _slot_save_size(slot: storage.SaveSlot) -> Optional[int]:
-    save_data = slot.path / "save_data"
-    if save_data.exists():
-        return sum(f.stat().st_size for f in save_data.rglob("*") if f.is_file())
-    files = [
-        f for f in slot.path.iterdir()
-        if f.is_file() and f.name not in storage._RESERVED and not f.name.startswith(".")
-    ]
-    return sum(f.stat().st_size for f in files) if files else None
 
 
 def _fmt_size(n: int) -> str:
@@ -2041,26 +1714,13 @@ def _fmt_dt(dt: Optional[datetime]) -> str:
 
 
 class _SlotItem(QWidget):
-    """Custom widget for each row in the slot list."""
-
-    def __init__(self, name: str, timestamp: str, compact: bool = False) -> None:
+    def __init__(self, name: str) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 6 if compact else 8, 12, 6 if compact else 8)
-        layout.setSpacing(2)
-
+        layout.setContentsMargins(12, 6, 12, 6)
         name_lbl = QLabel(name)
         name_lbl.setStyleSheet("font-size: 13px; font-weight: 500; color: #d4cfc8;")
         layout.addWidget(name_lbl)
-
-        if not compact:
-            ts_lbl = QLabel(timestamp)
-            ts_lbl.setStyleSheet("font-size: 11px; color: #555566;")
-            layout.addWidget(ts_lbl)
-
-    def setSelected(self, selected: bool) -> None:
-        bg = "#1e1e26" if selected else "transparent"
-        self.setStyleSheet(f"background: {bg};")
 
 
 class _InfoRow(QWidget):
@@ -2092,582 +1752,3 @@ class _Divider(QFrame):
         self.setFrameShape(QFrame.HLine)
         self.setFixedHeight(1)
         self.setStyleSheet("background: #2a2a32; border: none;")
-
-
-class _Banner(QFrame):
-    """Coloured info/warning banner that sits at the top."""
-
-    def __init__(self, text: str, bg: str, fg: str) -> None:
-        super().__init__()
-        self.setStyleSheet(f"background: {bg}; border: none;")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 8, 14, 8)
-
-        lbl = QLabel(text)
-        lbl.setStyleSheet(f"color: {fg}; font-size: 12px; background: transparent;")
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-
-class _ResizeHandle(QWidget):
-    _MIN_H = 120
-
-    def __init__(self, target: QWidget, on_resize=None, parent=None):
-        super().__init__(parent)
-        self._target = target
-        self._on_resize = on_resize
-        self._drag_y = 0.0
-        self._drag_h = 0
-        self.setFixedHeight(5)
-        self.setCursor(Qt.SizeVerCursor)
-        self.setStyleSheet("background: #2a2a3a;")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_y = event.globalPosition().y()
-            self._drag_h = self._target.height()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.LeftButton:
-            delta = event.globalPosition().y() - self._drag_y
-            new_h = max(self._MIN_H, self._drag_h + int(delta))
-            self._target.setFixedHeight(new_h)
-            if self._on_resize:
-                self._on_resize(new_h)
-            event.accept()
-
-
-class _InlineVideoPlayer(QWidget):
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._url = ""
-        self._player = None
-        self._audio = None
-        self._seeking = False
-        self._thumb_player = None
-        self._thumb_sink = None
-        self._main_sink = None
-        self._fs_window: Optional[QWidget] = None
-        self._is_web: bool = False
-
-        self._user_height: int = 0
-        self.setFocusPolicy(Qt.ClickFocus)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 4, 0, 0)
-        outer.setSpacing(0)
-        self._outer_layout = outer
-
-        self._stack = QStackedWidget()
-        self._stack.setMinimumHeight(120)
-        self._stack.setFixedHeight(320)
-
-        if _HAS_MULTIMEDIA:
-            self._video_widget = _VideoFrame()
-            self._video_widget.installEventFilter(self)
-        else:
-            self._video_widget = QWidget()
-            self._video_widget.setStyleSheet("background: #000;")
-
-        self._video_container = QWidget()
-        vc_layout = QVBoxLayout(self._video_container)
-        vc_layout.setContentsMargins(0, 0, 0, 0)
-        vc_layout.setSpacing(0)
-        vc_layout.addWidget(self._video_widget)
-        self._play_overlay = _PlayOverlay(self._toggle, self._video_container)
-        self._play_overlay.hide()
-        self._video_container.installEventFilter(self)
-
-        self._stack.addWidget(self._video_container)  # index 0: local
-
-        if _HAS_WEBENGINE:
-            self._web_view = QWebEngineView()
-            self._web_view.settings().setAttribute(
-                QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True
-            )
-            self._web_view.page().fullScreenRequested.connect(self._on_web_fullscreen_requested)
-        else:
-            self._web_view = QWidget()
-            self._web_view.setStyleSheet("background: #000;")
-        self._stack.addWidget(self._web_view)  # index 1: web
-
-        outer.addWidget(self._stack, 1)
-
-        # Controls for local video
-        self._local_bar = QWidget()
-        self._local_bar.setStyleSheet("background: #16161e;")
-        local_ctrl = QVBoxLayout(self._local_bar)
-        local_ctrl.setContentsMargins(8, 4, 8, 4)
-        local_ctrl.setSpacing(3)
-
-        self._seek = QSlider(Qt.Horizontal)
-        self._seek.setRange(0, 0)
-        self._seek.sliderPressed.connect(self._on_seek_pressed)
-        self._seek.sliderMoved.connect(self._on_seek_moved)
-        self._seek.sliderReleased.connect(self._on_seek_released)
-        local_ctrl.addWidget(self._seek)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-
-        _ui_dir = Path(__file__).parent
-        self._icon_play = QIcon(str(_ui_dir / "play.svg"))
-        self._icon_pause = QIcon(str(_ui_dir / "pause.svg"))
-        self._play_btn = QPushButton()
-        self._play_btn.setIcon(self._icon_play)
-        self._play_btn.setIconSize(QSize(14, 14))
-        self._play_btn.setObjectName("ghostBtn")
-        self._play_btn.clicked.connect(self._toggle)
-        btn_row.addWidget(self._play_btn)
-
-        self._time_lbl = QLabel("0:00 / 0:00")
-        self._time_lbl.setStyleSheet("color: #888899; font-size: 11px;")
-        btn_row.addWidget(self._time_lbl)
-
-        btn_row.addStretch()
-
-        self._vol = QSlider(Qt.Horizontal)
-        self._vol.setRange(0, 100)
-        self._vol.setValue(100)
-        self._vol.setFixedWidth(64)
-        self._vol.valueChanged.connect(self._set_volume)
-        btn_row.addWidget(self._vol)
-
-        browser_btn = QPushButton("Open in player")
-        browser_btn.setObjectName("ghostBtn")
-        browser_btn.clicked.connect(self._open_in_browser)
-        btn_row.addWidget(browser_btn)
-
-        self._icon_fullscreen = QIcon(str(_ui_dir / "fullscreen.svg"))
-        self._icon_fullscreen_exit = QIcon(str(_ui_dir / "fullscreen_exit.svg"))
-        self._fullscreen_btn = QPushButton()
-        self._fullscreen_btn.setIcon(self._icon_fullscreen)
-        self._fullscreen_btn.setIconSize(QSize(14, 14))
-        self._fullscreen_btn.setObjectName("ghostBtn")
-        self._fullscreen_btn.setToolTip("Fullscreen")
-        self._fullscreen_btn.clicked.connect(self._toggle_fullscreen)
-        btn_row.addWidget(self._fullscreen_btn)
-
-        local_ctrl.addLayout(btn_row)
-        outer.addWidget(self._local_bar)
-
-        # Bar for web video (open in browser)
-        self._web_bar = QWidget()
-        self._web_bar.setStyleSheet("background: #16161e;")
-        web_row = QHBoxLayout(self._web_bar)
-        web_row.setContentsMargins(8, 6, 8, 6)
-        web_row.addStretch()
-
-        self._web_vol = QSlider(Qt.Horizontal)
-        self._web_vol.setRange(0, 100)
-        self._web_vol.setValue(100)
-        self._web_vol.setFixedWidth(64)
-        self._web_vol.valueChanged.connect(self._set_web_volume)
-        web_row.addWidget(self._web_vol)
-
-        web_browser_btn = QPushButton("Open in browser")
-        web_browser_btn.setObjectName("ghostBtn")
-        web_browser_btn.clicked.connect(self._open_web_in_browser)
-        web_row.addWidget(web_browser_btn)
-
-        self._web_fullscreen_btn = QPushButton()
-        self._web_fullscreen_btn.setIcon(self._icon_fullscreen)
-        self._web_fullscreen_btn.setIconSize(QSize(14, 14))
-        self._web_fullscreen_btn.setObjectName("ghostBtn")
-        self._web_fullscreen_btn.setToolTip("Fullscreen")
-        self._web_fullscreen_btn.clicked.connect(self._toggle_fullscreen)
-        web_row.addWidget(self._web_fullscreen_btn)
-
-        outer.addWidget(self._web_bar)
-        outer.addWidget(_ResizeHandle(self._stack, on_resize=self._on_manual_resize))
-
-        self._local_bar.hide()
-        self._web_bar.hide()
-
-    def _on_manual_resize(self, h: int) -> None:
-        self._user_height = h
-
-    def update_height(self, win_h: int) -> None:
-        if self._user_height != 0:
-            return
-        new_h = max(120, int(win_h * 0.50))
-        if abs(self._stack.height() - new_h) > 2:
-            self._stack.setFixedHeight(new_h)
-
-    def load(self, url: str) -> None:
-        self._stop()
-        self._url = url
-        if not url:
-            return
-        parsed = QUrl(url)
-        if parsed.isLocalFile():
-            self._load_local(parsed)
-        else:
-            self._load_web(url)
-
-    def unload(self) -> None:
-        self._stop()
-        if _HAS_WEBENGINE:
-            self._web_view.load(QUrl("about:blank"))
-        self._url = ""
-
-    def _load_local(self, parsed: QUrl) -> None:
-        if not _HAS_MULTIMEDIA:
-            return
-        if _HAS_WEBENGINE:
-            self._web_view.load(QUrl("about:blank"))
-        self._stack.setCurrentIndex(0)
-        self._is_web = False
-        self._local_bar.show()
-        self._web_bar.hide()
-        self._player = QMediaPlayer(self)
-        self._audio = QAudioOutput(self)
-        self._audio.setVolume(self._vol.value() / 100.0)
-        self._player.setAudioOutput(self._audio)
-        self._main_sink = QVideoSink(self)
-        self._main_sink.videoFrameChanged.connect(self._video_widget.update_frame)
-        self._player.setVideoSink(self._main_sink)
-        self._player.setSource(parsed)
-        self._player.positionChanged.connect(self._on_position)
-        self._player.durationChanged.connect(self._on_duration)
-        self._player.playbackStateChanged.connect(self._on_state)
-        self._play_overlay.set_thumbnail(None)
-        self._play_overlay.setGeometry(self._video_container.rect())
-        self._play_overlay.show()
-        self._play_overlay.raise_()
-        self._grab_thumbnail(parsed)
-
-    def _load_web(self, url: str) -> None:
-        if not _HAS_WEBENGINE:
-            return
-        self._stack.setCurrentIndex(1)
-        self._is_web = True
-        self._local_bar.hide()
-        self._web_bar.show()
-        html = video_module.embed_html(url, autoplay=False) or video_module.unsupported_html()
-        self._web_view.setHtml(html, QUrl("http://localhost/"))
-        QTimer.singleShot(1200, lambda: self._set_web_volume(self._web_vol.value()))
-
-    def _stop(self) -> None:
-        self._exit_fullscreen()
-        self._is_web = False
-        if self._thumb_player is not None:
-            self._thumb_player.stop()
-            self._thumb_player.deleteLater()
-            self._thumb_player = None
-        if self._thumb_sink is not None:
-            self._thumb_sink.deleteLater()
-            self._thumb_sink = None
-        if self._player is not None:
-            self._player.positionChanged.disconnect(self._on_position)
-            self._player.durationChanged.disconnect(self._on_duration)
-            self._player.playbackStateChanged.disconnect(self._on_state)
-            self._player.stop()
-            self._player.deleteLater()
-            self._player = None
-        if self._main_sink is not None:
-            self._main_sink.deleteLater()
-            self._main_sink = None
-        if self._audio is not None:
-            self._audio.deleteLater()
-            self._audio = None
-        self._play_overlay.hide()
-        self._seeking = False
-        self._seek.blockSignals(True)
-        self._seek.setValue(0)
-        self._seek.setRange(0, 0)
-        self._seek.blockSignals(False)
-        self._time_lbl.setText("0:00 / 0:00")
-        self._play_btn.setIcon(self._icon_play)
-        self._local_bar.hide()
-        self._web_bar.hide()
-
-    def _grab_thumbnail(self, url: QUrl) -> None:
-        if not _HAS_MULTIMEDIA:
-            return
-        self._thumb_player = QMediaPlayer(self)
-        self._thumb_sink = QVideoSink(self)
-        self._thumb_player.setVideoSink(self._thumb_sink)
-        self._thumb_player.setSource(url)
-        state = {"seeked": False}
-
-        def on_frame(frame) -> None:
-            if self._thumb_player is None or not frame.isValid():
-                return
-            if not state["seeked"]:
-                dur = self._thumb_player.duration()
-                if dur > 1000:
-                    self._thumb_player.setPosition(min(2000, dur // 4))
-                state["seeked"] = True
-                return
-            img = frame.toImage()
-            if img.isNull():
-                return
-            tp, ts = self._thumb_player, self._thumb_sink
-            self._thumb_player = None
-            self._thumb_sink = None
-            tp.stop()
-            tp.deleteLater()
-            ts.deleteLater()
-            self._play_overlay.set_thumbnail(img)
-
-        self._thumb_sink.videoFrameChanged.connect(on_frame)
-        self._thumb_player.play()
-
-    def _open_in_browser(self) -> None:
-        if self._player is not None:
-            self._player.pause()
-        QDesktopServices.openUrl(QUrl(self._url))
-
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self._video_widget and event.type() == QEvent.Type.MouseButtonDblClick:
-            self._toggle_fullscreen()
-            return True
-        if obj is self._video_widget and event.type() == QEvent.Type.MouseButtonRelease:
-            self._toggle()
-            self.setFocus()
-            return True
-        if obj is self._video_container and event.type() == QEvent.Type.Resize:
-            self._play_overlay.setGeometry(obj.rect())
-        if obj is self._fs_window and event.type() == QEvent.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F):
-                self._exit_fullscreen()
-                return True
-        return super().eventFilter(obj, event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Space:
-            self._toggle()
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_F:
-            self._toggle_fullscreen()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def _toggle_fullscreen(self) -> None:
-        if self._fs_window is not None:
-            self._exit_fullscreen()
-        else:
-            self._enter_fullscreen()
-
-    def _on_web_fullscreen_requested(self, request) -> None:
-        request.accept()
-        if request.toggleOn():
-            self._enter_fullscreen()
-        else:
-            self._exit_fullscreen()
-
-    def _enter_fullscreen(self) -> None:
-        if self._fs_window is not None:
-            return
-        idx = self._stack.currentIndex()
-        if idx == 0:
-            content, bar, btn = self._video_container, self._local_bar, self._fullscreen_btn
-        elif idx == 1:
-            content, bar, btn = self._web_view, self._web_bar, self._web_fullscreen_btn
-        else:
-            return
-        self._fs_idx = idx
-        self._fs_content = content
-        self._fs_bar = bar
-        self._fs_btn = btn
-        self._fs_bar_index = self._outer_layout.indexOf(bar)
-        self._stack.removeWidget(content)
-        self._outer_layout.removeWidget(bar)
-        self._fs_window = QWidget()
-        self._fs_window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self._fs_window.setStyleSheet("background: #000;")
-        self._fs_window.setWindowTitle("FromSave Manager - Video")
-        layout = QVBoxLayout(self._fs_window)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(content, 1)
-        layout.addWidget(bar)
-        content.show()
-        bar.show()
-        self._fs_window.installEventFilter(self)
-        self._fs_window.showFullScreen()
-        self._fs_window.setFocus()
-        btn.setIcon(self._icon_fullscreen_exit)
-
-    def _exit_fullscreen(self) -> None:
-        if self._fs_window is None:
-            return
-        fs_window = self._fs_window
-        self._fs_window = None
-        content, bar, btn, idx = self._fs_content, self._fs_bar, self._fs_btn, self._fs_idx
-        fs_window.layout().removeWidget(content)
-        fs_window.layout().removeWidget(bar)
-        self._stack.insertWidget(idx, content)
-        self._stack.setCurrentIndex(idx)
-        if self._fs_bar_index >= 0:
-            self._outer_layout.insertWidget(self._fs_bar_index, bar)
-        else:
-            self._outer_layout.addWidget(bar)
-        bar.show()
-        fs_window.removeEventFilter(self)
-        fs_window.close()
-        fs_window.deleteLater()
-        btn.setIcon(self._icon_fullscreen)
-
-    def _open_web_in_browser(self) -> None:
-        if not _HAS_WEBENGINE:
-            QDesktopServices.openUrl(QUrl(self._url))
-            return
-        self._web_view.page().runJavaScript(
-            "(function(){"
-            "var f=document.querySelector('iframe');if(!f)return;"
-            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"pauseVideo\",\"args\":\"\"}','*');"
-            "f.contentWindow.postMessage('{\"method\":\"pause\"}','*');"
-            "})()"
-        )
-        self._web_view.page().runJavaScript(
-            "window._embed_time||0",
-            self._open_browser_at_time,
-        )
-
-    def _open_browser_at_time(self, t) -> None:
-        url = self._url
-        if isinstance(t, (int, float)) and t > 1 and video_module.youtube_video_id(url):
-            sep = '&' if '?' in url else '?'
-            url = f"{url}{sep}t={int(t)}"
-        QDesktopServices.openUrl(QUrl(url))
-
-    def _set_web_volume(self, v: int) -> None:
-        if not _HAS_WEBENGINE or not self._is_web:
-            return
-        mute_cmd = "unMute" if v > 0 else "mute"
-        self._web_view.page().runJavaScript(
-            "(function(){"
-            "var f=document.querySelector('iframe');if(!f)return;"
-            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"setVolume\",\"args\":[" + str(v) + "]}','*');"
-            "f.contentWindow.postMessage('{\"event\":\"command\",\"func\":\"" + mute_cmd + "\",\"args\":\"\"}','*');"
-            "})()"
-        )
-
-    def _toggle(self) -> None:
-        if self._player is None:
-            return
-        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self._player.pause()
-        else:
-            self._player.play()
-
-    def _on_seek_pressed(self) -> None:
-        self._seeking = True
-
-    def _on_seek_moved(self, ms: int) -> None:
-        dur = self._player.duration() if self._player is not None else 0
-        self._time_lbl.setText(f"{_fmt_ms(ms)} / {_fmt_ms(dur)}")
-        if self._player is not None:
-            self._player.setPosition(ms)
-
-    def _on_seek_released(self) -> None:
-        self._seeking = False
-        if self._player is not None:
-            self._player.setPosition(self._seek.value())
-
-    def _set_volume(self, v: int) -> None:
-        if self._audio is not None:
-            self._audio.setVolume(v / 100.0)
-
-    def _on_position(self, ms: int) -> None:
-        if not self._seeking:
-            self._seek.blockSignals(True)
-            self._seek.setValue(ms)
-            self._seek.blockSignals(False)
-            dur = self._player.duration() if self._player is not None else 0
-            self._time_lbl.setText(f"{_fmt_ms(ms)} / {_fmt_ms(dur)}")
-
-    def _on_duration(self, ms: int) -> None:
-        self._seek.setRange(0, ms)
-
-    def _on_state(self, state) -> None:
-        playing = state == QMediaPlayer.PlaybackState.PlayingState
-        self._play_btn.setIcon(self._icon_pause if playing else self._icon_play)
-        if playing:
-            self._play_overlay.hide()
-
-
-class _PlayOverlay(QWidget):
-    def __init__(self, on_click, parent=None) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self._on_click = on_click
-        self._thumbnail: QImage | None = None
-
-    def set_thumbnail(self, img: QImage | None) -> None:
-        self._thumbnail = img
-        self.update()
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._on_click()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, _) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self._thumbnail is not None and not self._thumbnail.isNull():
-            scaled = self._thumbnail.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = (self.width() - scaled.width()) // 2
-            y = (self.height() - scaled.height()) // 2
-            p.drawImage(x, y, scaled)
-            p.fillRect(self.rect(), QColor(0, 0, 0, 60))
-        cx = self.width() / 2
-        cy = self.height() / 2
-        r = 36.0
-        p.setBrush(QColor(255, 255, 255, 200))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(QPointF(cx, cy), r, r)
-        tri_h = r * 0.85
-        tri_w = tri_h * 0.9
-        ox = r * 0.12
-        p.setBrush(QColor(20, 20, 20, 220))
-        p.drawPolygon(QPolygonF([
-            QPointF(cx - tri_w / 2 + ox, cy - tri_h / 2),
-            QPointF(cx - tri_w / 2 + ox, cy + tri_h / 2),
-            QPointF(cx + tri_w / 2 + ox, cy),
-        ]))
-
-
-class _VideoFrame(QWidget):
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setStyleSheet("background: #000;")
-        self._frame: QImage | None = None
-
-    def update_frame(self, frame) -> None:
-        if frame.isValid():
-            img = frame.toImage()
-            if not img.isNull():
-                self._frame = img
-                self.update()
-
-    def paintEvent(self, _) -> None:
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor(0, 0, 0))
-        if self._frame and not self._frame.isNull():
-            scaled = self._frame.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = (self.width() - scaled.width()) // 2
-            y = (self.height() - scaled.height()) // 2
-            p.drawImage(x, y, scaled)
-
-
-def _fmt_ms(ms: int) -> str:
-    s = ms // 1000
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02}:{s:02}"
-    return f"{m}:{s:02}"
