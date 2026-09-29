@@ -1,26 +1,31 @@
 import json
 import logging
-import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import send2trash
+
 from app_paths import app_dir, migrate_from_bundle
 
 migrate_from_bundle("saves")
 
-_ROOT = app_dir()
-SAVES_DIR = _ROOT / "saves"
-
-_RESERVED = {"meta.json", "notes.txt"}
-_GAME_CONFIG_FILENAME = "game.json"
+SAVES_DIR = app_dir() / "saves"
 logger = logging.getLogger(__name__)
 
-# Games whose saves/ folder ships pre-created in the release zip (see README's
-# "Supported games" list). They're all single-file saves, so a fresh install
-# can configure them as "file" mode without asking.
+_RESERVED = {"meta.json", "notes.txt"}
+_GAME_CONFIG = "game.json"
+_BACKUPS_DIR = "_backups"
+_RUN_BACKUPS_DIR = "_run_backups"
+_PRACTICE_START_DIR = "_practice_start"
+_MAX_BACKUPS = 3
+
+SORT_MODES = ("name", "created", "modified", "custom")
+
+# Games whose saves/ folder ships in the release zip. They're all single-file
+# saves, so a fresh install configures them as "file" mode without asking.
 BUNDLED_GAMES = {
     "Armored Core VI",
     "Dark Souls II Scholar of the First Sin",
@@ -30,18 +35,13 @@ BUNDLED_GAMES = {
     "Sekiro",
 }
 
-
-# Windows-invalid filename characters plus path separators and control
-# characters; slot and profile names become directory names, so anything
-# typed for one (main window, overlay, or the phone app) must stay a plain
-# name — otherwise e.g. "a/b" silently nests "b" inside a folder named "a"
-# instead of erroring, since pathlib treats "/" as a separator when joining.
+# Slot and profile names become directory names, so reject path separators,
+# Windows-invalid characters and control characters ("a/b" would nest folders).
 _BAD_NAME_CHARS = set('<>:"/\\|?*') | {chr(c) for c in range(32)}
 
 
 def validate_entry_name(name: str) -> str:
-    """Validate a slot or profile name typed by a user. Returns the trimmed
-    name, or raises ValueError with a message safe to show as-is."""
+    """Return the trimmed name, or raise ValueError with a user-facing message."""
     name = name.strip()
     if not name:
         raise ValueError("Name cannot be empty")
@@ -52,32 +52,12 @@ def validate_entry_name(name: str) -> str:
     return name
 
 
-def _load_game_json(game_dir: Path) -> dict:
-    cfg_file = game_dir / _GAME_CONFIG_FILENAME
-    if not cfg_file.exists():
-        return {}
-    try:
-        with open(cfg_file, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        logger.exception("Failed to read game config: %s", cfg_file)
-        return {}
-
-
-def _write_game_json(game_dir: Path, data: dict) -> None:
-    (game_dir / _GAME_CONFIG_FILENAME).write_text(
-        json.dumps(data, indent=4), encoding="utf-8"
-    )
-
-
-
 @dataclass
 class GameConfig:
     name: str
-    save_path: str                           # used by "file" and "folder" modes
+    save_path: str                           # "file" and "folder" modes
     save_mode: str = "file"                  # "file" | "files" | "folder"
-    save_paths: list[str] = field(default_factory=list)  # used by "files" mode
+    save_paths: list[str] = field(default_factory=list)  # "files" mode
 
 
 @dataclass
@@ -93,40 +73,61 @@ class SaveSlot:
     video_url: str = ""
 
 
-def find_unconfigured_games() -> list[str]:
-    """Return names of game directories that exist but have no game.json."""
+# JSON helpers
+
+def _read_json_dict(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to read JSON: %s", path)
+        return {}
+
+
+def _write_json(path: Path, data) -> None:
+    path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+def _timestamps(created: datetime, modified: datetime) -> dict:
+    return {
+        "created": created.isoformat(timespec="seconds"),
+        "modified": modified.isoformat(timespec="seconds"),
+    }
+
+
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        logger.warning("Invalid ISO datetime in metadata: %r", value)
+        return None
+
+
+# Games
+
+def _game_dirs() -> list[Path]:
     if not SAVES_DIR.exists():
         return []
-    result = []
-    for game_dir in sorted(SAVES_DIR.iterdir(), key=lambda p: p.name.lower()):
-        if not game_dir.is_dir() or game_dir.name.startswith("_"):
-            continue
-        if not (game_dir / _GAME_CONFIG_FILENAME).exists():
-            result.append(game_dir.name)
-    return result
+    return sorted(
+        (d for d in SAVES_DIR.iterdir() if d.is_dir() and not d.name.startswith("_")),
+        key=lambda d: d.name.lower(),
+    )
 
 
-def save_game_config(game_cfg: GameConfig) -> None:
-    """Write a single game's config to its game.json."""
-    game_dir = SAVES_DIR / game_cfg.name
-    game_dir.mkdir(parents=True, exist_ok=True)
-    data: dict = {"active": True, "save_mode": game_cfg.save_mode}
-    if game_cfg.save_mode == "files":
-        data["save_paths"] = game_cfg.save_paths
-    else:
-        data["save_path"] = game_cfg.save_path
-    _write_game_json(game_dir, data)
-    logger.info("Wrote game config: game=%r mode=%r", game_cfg.name, game_cfg.save_mode)
+def find_unconfigured_games() -> list[str]:
+    """Return names of game directories that exist but have no game.json."""
+    return [d.name for d in _game_dirs() if not (d / _GAME_CONFIG).exists()]
 
 
 def load_games() -> list[GameConfig]:
-    if not SAVES_DIR.exists():
-        return []
     games = []
-    for game_dir in sorted(SAVES_DIR.iterdir(), key=lambda p: p.name.lower()):
-        if not game_dir.is_dir() or game_dir.name.startswith("_"):
-            continue
-        data = _load_game_json(game_dir)
+    for game_dir in _game_dirs():
+        data = _read_json_dict(game_dir / _GAME_CONFIG)
         if not data.get("active", True):
             continue
         games.append(GameConfig(
@@ -139,452 +140,41 @@ def load_games() -> list[GameConfig]:
     return games
 
 
+def save_game_config(game_cfg: GameConfig) -> None:
+    game_dir = SAVES_DIR / game_cfg.name
+    game_dir.mkdir(parents=True, exist_ok=True)
+    data: dict = {"active": True, "save_mode": game_cfg.save_mode}
+    if game_cfg.save_mode == "files":
+        data["save_paths"] = game_cfg.save_paths
+    else:
+        data["save_path"] = game_cfg.save_path
+    _write_json(game_dir / _GAME_CONFIG, data)
+    logger.info("Wrote game config: game=%r mode=%r", game_cfg.name, game_cfg.save_mode)
+
+
+def save_games(games: list[GameConfig]) -> None:
+    for game_cfg in games:
+        save_game_config(game_cfg)
+
+
+def deactivate_game(name: str) -> None:
+    """Hide a game from the game list without deleting its saves."""
+    game_dir = SAVES_DIR / name
+    if not game_dir.exists():
+        return
+    data = _read_json_dict(game_dir / _GAME_CONFIG)
+    data["active"] = False
+    _write_json(game_dir / _GAME_CONFIG, data)
+    logger.info("Deactivated game: %r", name)
+
+
+# Profiles
+
 def load_profiles(game: str) -> list[str]:
     game_dir = SAVES_DIR / game
-    if not game_dir.exists():
-        logger.debug("No profiles directory for game=%r: %s", game, game_dir)
+    if not game or not game_dir.exists():
         return []
-    profiles = sorted(p.name for p in game_dir.iterdir() if p.is_dir())
-    logger.debug("Loaded %d profile(s) for game=%r", len(profiles), game)
-    return profiles
-
-
-def load_slots(game: str, profile: str) -> list[SaveSlot]:
-    profile_dir = SAVES_DIR / game / profile
-    if not profile_dir.exists():
-        logger.debug("No slots directory for game=%r profile=%r: %s", game, profile, profile_dir)
-        return []
-    slots = []
-    for slot_dir in sorted(profile_dir.iterdir()):
-        if not slot_dir.is_dir():
-            continue
-        slot = _read_slot(slot_dir, game, profile)
-        if slot is not None:
-            slots.append(slot)
-    logger.debug("Loaded %d slot(s) for game=%r profile=%r", len(slots), game, profile)
-    return slots
-
-
-def _read_slot(slot_dir: Path, game: str, profile: str) -> Optional[SaveSlot]:
-    meta_file = slot_dir / "meta.json"
-    notes_file = slot_dir / "notes.txt"
-
-    # folder-mode slots store content in save_data/
-    save_data_dir = slot_dir / "save_data"
-    has_folder = save_data_dir.exists() and save_data_dir.is_dir()
-
-    save_file: Optional[str] = None
-    if not has_folder:
-        save_file = next(
-            (
-                f.name for f in slot_dir.iterdir()
-                if f.is_file() and f.name not in _RESERVED and not f.name.startswith(".")
-            ),
-            None,
-        )
-
-    # Slot is only valid if it has content or was explicitly created (meta exists)
-    if not has_folder and save_file is None and not meta_file.exists():
-        logger.debug("Ignoring empty slot directory without metadata: %s", slot_dir)
-        return None
-
-    if not meta_file.exists():
-        logger.info("Creating missing metadata for slot: %s", slot_dir)
-        if save_file:
-            _create_meta(meta_file, (slot_dir / save_file).stat())
-        else:
-            now = datetime.now()
-            meta = {
-                "created": now.isoformat(timespec="seconds"),
-                "modified": now.isoformat(timespec="seconds"),
-            }
-            meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
-
-    if not notes_file.exists():
-        notes_file.write_text("", encoding="utf-8")
-
-    meta = _read_meta(meta_file)
-    date_created = _parse_iso(meta.get("created"))
-    date_modified = _parse_iso(meta.get("modified"))
-    notes = notes_file.read_text(encoding="utf-8").strip()
-    video_url = meta.get("video_url", "")
-
-    return SaveSlot(
-        name=slot_dir.name,
-        game=game,
-        profile=profile,
-        path=slot_dir,
-        date_created=date_created,
-        date_modified=date_modified,
-        notes=notes,
-        save_file=save_file,
-        video_url=video_url,
-    )
-
-
-def _create_meta(meta_file: Path, stat: os.stat_result) -> None:
-    created = datetime.fromtimestamp(
-        getattr(stat, "st_birthtime", stat.st_ctime)
-    )
-    modified = datetime.fromtimestamp(stat.st_mtime)
-    meta = {
-        "created": created.isoformat(timespec="seconds"),
-        "modified": modified.isoformat(timespec="seconds"),
-    }
-    meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
-
-
-def _read_meta(meta_file: Path) -> dict:
-    try:
-        with open(meta_file, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        logger.exception("Failed to read metadata: %s", meta_file)
-        return {}
-
-
-def _write_meta(meta_file: Path, updates: dict) -> None:
-    meta = _read_meta(meta_file)
-    meta.update(updates)
-    meta_file.write_text(json.dumps(meta, indent=4), encoding="utf-8")
-
-
-def save_notes(slot: SaveSlot, text: str) -> None:
-    notes_file = slot.path / "notes.txt"
-    logger.debug("Saving notes for game=%r profile=%r slot=%r", slot.game, slot.profile, slot.name)
-    notes_file.write_text(text, encoding="utf-8")
-    slot.notes = text
-
-
-def save_video_url(slot: SaveSlot, url: str) -> None:
-    url = url.strip()
-    logger.debug("Saving video URL for game=%r profile=%r slot=%r has_url=%s",
-                 slot.game, slot.profile, slot.name, bool(url))
-    _write_meta(slot.path / "meta.json", {"video_url": url})
-    slot.video_url = url
-
-
-def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -> SaveSlot:
-    """Copy the game's live save into a new slot folder."""
-    slot_dir = SAVES_DIR / game / profile / slot_name
-    logger.info("Importing save: game=%r profile=%r slot=%r mode=%s dest=%s",
-                game, profile, slot_name, game_cfg.save_mode, slot_dir)
-    slot_dir.mkdir(parents=True, exist_ok=False)
-
-    mode = game_cfg.save_mode
-    save_file: Optional[str] = None
-
-    if mode == "file":
-        src = Path(game_cfg.save_path)
-        logger.debug("Copying live save file: %s -> %s", src, slot_dir / src.name)
-        shutil.copy2(src, slot_dir / src.name)
-        save_file = src.name
-    elif mode == "files":
-        for path_str in game_cfg.save_paths:
-            src = Path(path_str)
-            if src.is_file():
-                logger.debug("Copying live save file: %s -> %s", src, slot_dir / src.name)
-                shutil.copy2(src, slot_dir / src.name)
-            else:
-                logger.warning("Configured save file missing during import: %s", src)
-    elif mode == "folder":
-        logger.debug("Copying live save folder: %s -> %s", game_cfg.save_path, slot_dir / "save_data")
-        shutil.copytree(Path(game_cfg.save_path), slot_dir / "save_data")
-
-    now = datetime.now()
-    meta = {
-        "created": now.isoformat(timespec="seconds"),
-        "modified": now.isoformat(timespec="seconds"),
-    }
-    (slot_dir / "meta.json").write_text(json.dumps(meta, indent=4), encoding="utf-8")
-    (slot_dir / "notes.txt").write_text("", encoding="utf-8")
-
-    logger.info("Imported save slot: game=%r profile=%r slot=%r", game, profile, slot_name)
-    return SaveSlot(
-        name=slot_name,
-        game=game,
-        profile=profile,
-        path=slot_dir,
-        date_created=now,
-        date_modified=now,
-        notes="",
-        save_file=save_file,
-        video_url="",
-    )
-
-
-def replace_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
-    """Overwrite a slot's contents with the game's live save."""
-    mode = game_cfg.save_mode
-    logger.info("Replacing slot from live save: game=%r profile=%r slot=%r mode=%s",
-                slot.game, slot.profile, slot.name, mode)
-
-    if mode == "file":
-        src = Path(game_cfg.save_path)
-        logger.debug("Copying live save file: %s -> %s", src, slot.path / slot.save_file)
-        shutil.copy2(src, slot.path / slot.save_file)
-    elif mode == "files":
-        for path_str in game_cfg.save_paths:
-            src = Path(path_str)
-            if src.is_file():
-                logger.debug("Copying live save file: %s -> %s", src, slot.path / src.name)
-                shutil.copy2(src, slot.path / src.name)
-            else:
-                logger.warning("Configured save file missing during replace: %s", src)
-    elif mode == "folder":
-        save_data = slot.path / "save_data"
-        if save_data.exists():
-            logger.debug("Removing old slot save folder: %s", save_data)
-            shutil.rmtree(save_data)
-        logger.debug("Copying live save folder: %s -> %s", game_cfg.save_path, save_data)
-        shutil.copytree(Path(game_cfg.save_path), save_data)
-
-    now = datetime.now()
-    _update_meta_modified(slot.path / "meta.json", now)
-    slot.date_modified = now
-
-
-_BACKUPS_DIR_NAME = "_backups"
-_MAX_LOAD_BACKUPS = 3
-
-
-def load_save(slot: SaveSlot, game_cfg: GameConfig, *, make_backup: bool = True) -> None:
-    """Copy a slot's save back to the game's save path."""
-    logger.info("Loading slot to live save: game=%r profile=%r slot=%r mode=%s make_backup=%s",
-                slot.game, slot.profile, slot.name, game_cfg.save_mode, make_backup)
-
-    if game_cfg.save_mode in ("file", "folder") and not game_cfg.save_path:
-        raise ValueError(f"Save path is not configured for game {game_cfg.name!r}")
-    if game_cfg.save_mode == "files" and not game_cfg.save_paths:
-        raise ValueError(f"No save paths configured for game {game_cfg.name!r}")
-
-    if make_backup:
-        try:
-            _backup_live_save(game_cfg)
-        except OSError:
-            logger.exception("Failed to back up live save before load; continuing")
-            pass  # best-effort — don't block the load if backup fails
-
-    mode = game_cfg.save_mode
-
-    if mode == "file":
-        logger.debug("Copying slot save file: %s -> %s", slot.path / slot.save_file, game_cfg.save_path)
-        shutil.copy2(slot.path / slot.save_file, Path(game_cfg.save_path))
-    elif mode == "files":
-        for path_str in game_cfg.save_paths:
-            dst = Path(path_str)
-            slot_file = slot.path / dst.name
-            if slot_file.exists():
-                logger.debug("Copying slot save file: %s -> %s", slot_file, dst)
-                shutil.copy2(slot_file, dst)
-            else:
-                logger.warning("Slot file missing during load: %s", slot_file)
-    elif mode == "folder":
-        dest = Path(game_cfg.save_path)
-        if dest.exists():
-            logger.debug("Removing live save folder before load: %s", dest)
-            shutil.rmtree(dest)
-        logger.debug("Copying slot save folder: %s -> %s", slot.path / "save_data", dest)
-        shutil.copytree(slot.path / "save_data", dest)
-
-
-def _backup_live_save(game_cfg: GameConfig) -> None:
-    """Snapshot the live game save before it is overwritten by load_save."""
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
-    backup_dir = SAVES_DIR / _BACKUPS_DIR_NAME / game_cfg.name / timestamp
-    mode = game_cfg.save_mode
-
-    if mode == "file":
-        if not game_cfg.save_path:
-            logger.warning("Skipping load backup; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping load backup; live save file missing: %s", src)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Backing up live save file: %s -> %s", src, backup_dir / src.name)
-        shutil.copy2(src, backup_dir / src.name)
-    elif mode == "files":
-        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
-        if not existing:
-            logger.warning("Skipping load backup; no configured save files exist for game=%r", game_cfg.name)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        for src in existing:
-            logger.info("Backing up live save file: %s -> %s", src, backup_dir / src.name)
-            shutil.copy2(src, backup_dir / src.name)
-    elif mode == "folder":
-        if not game_cfg.save_path:
-            logger.warning("Skipping load backup; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping load backup; live save folder missing: %s", src)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Backing up live save folder: %s -> %s", src, backup_dir / "save_data")
-        shutil.copytree(src, backup_dir / "save_data")
-
-    _prune_backups(game_cfg.name, _MAX_LOAD_BACKUPS)
-
-
-def _prune_backups(game_name: str, keep: int) -> None:
-    """Delete oldest backup snapshots, retaining only the `keep` most recent."""
-    backup_game_dir = SAVES_DIR / _BACKUPS_DIR_NAME / game_name
-    if not backup_game_dir.exists():
-        return
-    dirs = sorted(d for d in backup_game_dir.iterdir() if d.is_dir())
-    for old in dirs[:-keep]:
-        logger.info("Pruning old load backup: %s", old)
-        shutil.rmtree(old)
-
-
-_PRACTICE_START_DIR_NAME = "_practice_start"
-
-
-def snapshot_practice_start(game_cfg: GameConfig) -> None:
-    """Snapshot the live save when practice mode is activated. Overwrites any previous snapshot
-    for this game so there is always exactly one — the save from before the current practice session."""
-    dest = SAVES_DIR / _PRACTICE_START_DIR_NAME / game_cfg.name
-    mode = game_cfg.save_mode
-
-    if mode == "file":
-        if not game_cfg.save_path:
-            logger.warning("Skipping practice-start snapshot; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping practice-start snapshot; live save file missing: %s", src)
-            return
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True, exist_ok=True)
-        logger.info("Practice-start snapshot: %s -> %s", src, dest / src.name)
-        shutil.copy2(src, dest / src.name)
-    elif mode == "files":
-        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
-        if not existing:
-            logger.warning("Skipping practice-start snapshot; no save files exist for game=%r", game_cfg.name)
-            return
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True, exist_ok=True)
-        for src in existing:
-            logger.info("Practice-start snapshot: %s -> %s", src, dest / src.name)
-            shutil.copy2(src, dest / src.name)
-    elif mode == "folder":
-        if not game_cfg.save_path:
-            logger.warning("Skipping practice-start snapshot; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping practice-start snapshot; live save folder missing: %s", src)
-            return
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True, exist_ok=True)
-        logger.info("Practice-start snapshot: %s -> %s", src, dest / "save_data")
-        shutil.copytree(src, dest / "save_data")
-
-
-def restore_practice_start(game_cfg: GameConfig) -> None:
-    """Restore the snapshot taken when practice mode was activated back to the live save path."""
-    src_dir = SAVES_DIR / _PRACTICE_START_DIR_NAME / game_cfg.name
-    if not src_dir.exists():
-        logger.warning("No practice-start snapshot to restore for game=%r", game_cfg.name)
-        return
-    mode = game_cfg.save_mode
-
-    if mode == "file":
-        if not game_cfg.save_path:
-            logger.warning("Skipping practice-start restore; save path not configured for game=%r", game_cfg.name)
-            return
-        candidates = [f for f in src_dir.iterdir() if f.is_file()]
-        if not candidates:
-            logger.warning("Practice-start snapshot is empty for game=%r", game_cfg.name)
-            return
-        src = candidates[0]
-        logger.info("Restoring practice-start snapshot: %s -> %s", src, game_cfg.save_path)
-        shutil.copy2(src, Path(game_cfg.save_path))
-    elif mode == "files":
-        for path_str in game_cfg.save_paths:
-            dst = Path(path_str)
-            snapshot_file = src_dir / dst.name
-            if snapshot_file.exists():
-                logger.info("Restoring practice-start snapshot: %s -> %s", snapshot_file, dst)
-                shutil.copy2(snapshot_file, dst)
-            else:
-                logger.warning("Practice-start snapshot missing file %s for game=%r", dst.name, game_cfg.name)
-    elif mode == "folder":
-        if not game_cfg.save_path:
-            logger.warning("Skipping practice-start restore; save path not configured for game=%r", game_cfg.name)
-            return
-        snapshot_data = src_dir / "save_data"
-        if not snapshot_data.exists():
-            logger.warning("Practice-start snapshot has no save_data for game=%r", game_cfg.name)
-            return
-        dst = Path(game_cfg.save_path)
-        if dst.exists():
-            shutil.rmtree(dst)
-        logger.info("Restoring practice-start snapshot: %s -> %s", snapshot_data, dst)
-        shutil.copytree(snapshot_data, dst)
-
-
-_RUN_BACKUPS_DIR_NAME = "_run_backups"
-_MAX_RUN_BACKUPS = 3
-
-
-def take_run_backup(game_cfg: GameConfig) -> None:
-    """Snapshot the live game save for run mode; keeps the 3 most recent."""
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    backup_dir = SAVES_DIR / _RUN_BACKUPS_DIR_NAME / game_cfg.name / timestamp
-    mode = game_cfg.save_mode
-
-    if mode == "file":
-        if not game_cfg.save_path:
-            logger.warning("Skipping run backup; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping run backup; live save file missing: %s", src)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Taking run backup file: %s -> %s", src, backup_dir / src.name)
-        shutil.copy2(src, backup_dir / src.name)
-    elif mode == "files":
-        existing = [Path(p) for p in game_cfg.save_paths if Path(p).exists()]
-        if not existing:
-            logger.warning("Skipping run backup; no configured save files exist for game=%r", game_cfg.name)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        for src in existing:
-            logger.info("Taking run backup file: %s -> %s", src, backup_dir / src.name)
-            shutil.copy2(src, backup_dir / src.name)
-    elif mode == "folder":
-        if not game_cfg.save_path:
-            logger.warning("Skipping run backup; save path not configured for game=%r", game_cfg.name)
-            return
-        src = Path(game_cfg.save_path)
-        if not src.exists():
-            logger.warning("Skipping run backup; live save folder missing: %s", src)
-            return
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Taking run backup folder: %s -> %s", src, backup_dir / "save_data")
-        shutil.copytree(src, backup_dir / "save_data")
-
-    _prune_run_backups(game_cfg.name)
-
-
-def _prune_run_backups(game_name: str) -> None:
-    backup_game_dir = SAVES_DIR / _RUN_BACKUPS_DIR_NAME / game_name
-    if not backup_game_dir.exists():
-        return
-    dirs = sorted(d for d in backup_game_dir.iterdir() if d.is_dir())
-    for old in dirs[:-_MAX_RUN_BACKUPS]:
-        logger.info("Pruning old run backup: %s", old)
-        shutil.rmtree(old)
+    return sorted(p.name for p in game_dir.iterdir() if p.is_dir())
 
 
 def create_profile(game: str, name: str) -> None:
@@ -599,106 +189,156 @@ def rename_profile(game: str, old_name: str, new_name: str) -> None:
 
 def delete_profile(game: str, name: str) -> None:
     logger.info("Deleting profile to trash: game=%r profile=%r", game, name)
-    import send2trash
     send2trash.send2trash(str(SAVES_DIR / game / name))
 
 
-def delete_slot(slot: SaveSlot, soft: bool = False) -> None:
-    """Delete a slot. If soft is True, send to system trash instead of deleting permanently."""
-    logger.info("Deleting slot: game=%r profile=%r slot=%r soft=%s path=%s",
-                slot.game, slot.profile, slot.name, soft, slot.path)
-    if soft:
-        import send2trash
-        send2trash.send2trash(str(slot.path))
-    else:
-        shutil.rmtree(slot.path)
+# Slots
+
+def _is_save_file(path: Path) -> bool:
+    return path.is_file() and path.name not in _RESERVED and not path.name.startswith(".")
+
+
+def slot_save_files(slot: SaveSlot) -> list[Path]:
+    """All save files stored in a slot, regardless of save mode."""
+    save_data = slot.path / "save_data"
+    if save_data.is_dir():
+        return [f for f in save_data.rglob("*") if f.is_file()]
+    return [f for f in slot.path.iterdir() if _is_save_file(f)]
+
+
+def load_slots(game: str, profile: str) -> list[SaveSlot]:
+    profile_dir = SAVES_DIR / game / profile
+    if not profile_dir.exists():
+        return []
+    slots = []
+    for slot_dir in sorted(profile_dir.iterdir()):
+        if slot_dir.is_dir() and (slot := _read_slot(slot_dir, game, profile)):
+            slots.append(slot)
+    logger.debug("Loaded %d slot(s) for game=%r profile=%r", len(slots), game, profile)
+    return slots
+
+
+def load_sorted_slots(game: str, profile: str, sort: str, desc: bool) -> list[SaveSlot]:
+    """Load slots in display order. Custom order is re-saved so it tracks added/removed slots."""
+    slots = load_slots(game, profile)
+    if sort == "name":
+        slots.sort(key=lambda s: s.name.lower(), reverse=desc)
+    elif sort == "created":
+        slots.sort(key=lambda s: s.date_created or datetime.min, reverse=desc)
+    elif sort == "modified":
+        slots.sort(key=lambda s: s.date_modified or s.date_created or datetime.min, reverse=desc)
+    elif sort == "custom":
+        order = {name: i for i, name in enumerate(load_slot_order(game, profile))}
+        slots.sort(key=lambda s: order.get(s.name, len(order)))
+        save_slot_order(game, profile, [s.name for s in slots])
+    return slots
+
+
+def _read_slot(slot_dir: Path, game: str, profile: str) -> Optional[SaveSlot]:
+    meta_file = slot_dir / "meta.json"
+    notes_file = slot_dir / "notes.txt"
+    has_folder = (slot_dir / "save_data").is_dir()
+    save_file = None if has_folder else next(
+        (f.name for f in slot_dir.iterdir() if _is_save_file(f)), None
+    )
+
+    # An empty folder is only a slot if it was explicitly created (has meta.json).
+    if not has_folder and save_file is None and not meta_file.exists():
+        return None
+
+    if not meta_file.exists():
+        logger.info("Creating missing metadata for slot: %s", slot_dir)
+        if save_file:
+            stat = (slot_dir / save_file).stat()
+            created = datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_ctime))
+            modified = datetime.fromtimestamp(stat.st_mtime)
+        else:
+            created = modified = datetime.now()
+        _write_json(meta_file, _timestamps(created, modified))
+
+    if not notes_file.exists():
+        notes_file.write_text("", encoding="utf-8")
+
+    meta = _read_json_dict(meta_file)
+    return SaveSlot(
+        name=slot_dir.name,
+        game=game,
+        profile=profile,
+        path=slot_dir,
+        date_created=_parse_iso(meta.get("created")),
+        date_modified=_parse_iso(meta.get("modified")),
+        notes=notes_file.read_text(encoding="utf-8").strip(),
+        save_file=save_file,
+        video_url=meta.get("video_url", ""),
+    )
+
+
+def _update_meta(meta_file: Path, updates: dict) -> None:
+    meta = _read_json_dict(meta_file)
+    meta.update(updates)
+    _write_json(meta_file, meta)
+
+
+def save_notes(slot: SaveSlot, text: str) -> None:
+    (slot.path / "notes.txt").write_text(text, encoding="utf-8")
+    slot.notes = text
+
+
+def save_video_url(slot: SaveSlot, url: str) -> None:
+    url = url.strip()
+    _update_meta(slot.path / "meta.json", {"video_url": url})
+    slot.video_url = url
 
 
 def rename_slot(slot: SaveSlot, new_name: str) -> None:
-    """Rename a slot's directory and update the slot object in-place."""
-    new_path = slot.path.parent / new_name
+    """Rename a slot's directory and update the slot object in place."""
     logger.info("Renaming slot: game=%r profile=%r %r -> %r",
                 slot.game, slot.profile, slot.name, new_name)
+    new_path = slot.path.parent / new_name
     slot.path.rename(new_path)
     slot.name = new_name
     slot.path = new_path
 
 
-def auto_slot_name(game: str, profile: str) -> str:
-    """Return the next unused auto-generated slot name for a profile."""
-    base = "new save"
-    if not (SAVES_DIR / game / profile / base).exists():
-        return base
-    n = 2
-    while (SAVES_DIR / game / profile / f"{base} {n}").exists():
+def delete_slot(slot: SaveSlot, soft: bool = False) -> None:
+    """Delete a slot; soft sends it to the system trash instead."""
+    logger.info("Deleting slot: game=%r profile=%r slot=%r soft=%s",
+                slot.game, slot.profile, slot.name, soft)
+    if soft:
+        send2trash.send2trash(str(slot.path))
+    else:
+        shutil.rmtree(slot.path)
+
+
+def _unique_name(folder: Path, base: str) -> str:
+    name, n = base, 2
+    while (folder / name).exists():
+        name = f"{base} {n}"
         n += 1
-    return f"{base} {n}"
+    return name
+
+
+def auto_slot_name(game: str, profile: str) -> str:
+    return _unique_name(SAVES_DIR / game / profile, "new save")
 
 
 def duplicate_slot_name(game: str, profile: str, original_name: str) -> str:
-    """Return a unique 'original copy' / 'original copy 2' name in the given profile."""
-    target = SAVES_DIR / game / profile
-    base = f"{original_name} copy"
-    if not (target / base).exists():
-        return base
-    n = 2
-    while (target / f"{base} {n}").exists():
-        n += 1
-    return f"{base} {n}"
-
-
-def duplicate_slot(slot: SaveSlot, new_name: str) -> SaveSlot:
-    """Copy a slot to a new name within the same profile."""
-    logger.info("Duplicating slot: game=%r profile=%r %r -> %r",
-                slot.game, slot.profile, slot.name, new_name)
-    new_dir = slot.path.parent / new_name
-    shutil.copytree(slot.path, new_dir)
-    now = datetime.now()
-    _write_meta(new_dir / "meta.json", {
-        "created": now.isoformat(timespec="seconds"),
-        "modified": now.isoformat(timespec="seconds"),
-    })
-    return _read_slot(new_dir, slot.game, slot.profile)
+    return _unique_name(SAVES_DIR / game / profile, f"{original_name} copy")
 
 
 def copy_slot_to_profile(slot: SaveSlot, target_profile: str, new_name: str) -> SaveSlot:
-    """Copy a slot (with its notes) to a different profile under the same game."""
-    logger.info("Copying slot to profile: game=%r %r/%r -> %r/%r",
+    """Copy a slot (with its notes) into a profile of the same game, with fresh timestamps."""
+    logger.info("Copying slot: game=%r %r/%r -> %r/%r",
                 slot.game, slot.profile, slot.name, target_profile, new_name)
     new_dir = SAVES_DIR / slot.game / target_profile / new_name
     shutil.copytree(slot.path, new_dir)
     now = datetime.now()
-    _write_meta(new_dir / "meta.json", {
-        "created": now.isoformat(timespec="seconds"),
-        "modified": now.isoformat(timespec="seconds"),
-    })
+    _update_meta(new_dir / "meta.json", _timestamps(now, now))
     return _read_slot(new_dir, slot.game, target_profile)
 
 
-def save_games(games: list[GameConfig]) -> None:
-    """Write each game's config to its own game.json inside its saves folder."""
-    logger.info("Saving config for %d game(s)", len(games))
-    SAVES_DIR.mkdir(parents=True, exist_ok=True)
-    for g in games:
-        game_dir = SAVES_DIR / g.name
-        game_dir.mkdir(parents=True, exist_ok=True)
-        data: dict = {"active": True, "save_mode": g.save_mode}
-        if g.save_mode == "files":
-            data["save_paths"] = g.save_paths
-        else:
-            data["save_path"] = g.save_path
-        _write_game_json(game_dir, data)
-
-
-def deactivate_game(name: str) -> None:
-    """Mark a game folder as inactive so it no longer appears in the game list."""
-    game_dir = SAVES_DIR / name
-    if not game_dir.exists():
-        return
-    data = _load_game_json(game_dir)
-    data["active"] = False
-    _write_game_json(game_dir, data)
-    logger.info("Deactivated game: %r", name)
+def duplicate_slot(slot: SaveSlot, new_name: str) -> SaveSlot:
+    return copy_slot_to_profile(slot, slot.profile, new_name)
 
 
 def load_slot_order(game: str, profile: str) -> list[str]:
@@ -714,26 +354,147 @@ def load_slot_order(game: str, profile: str) -> list[str]:
 
 
 def save_slot_order(game: str, profile: str, names: list[str]) -> None:
-    order_file = SAVES_DIR / game / profile / "order.json"
-    logger.debug("Saving slot order: game=%r profile=%r count=%d", game, profile, len(names))
-    with open(order_file, "w", encoding="utf-8") as f:
-        json.dump(names, f, indent=4)
+    _write_json(SAVES_DIR / game / profile / "order.json", names)
 
 
-def _update_meta_modified(meta_file: Path, now: datetime) -> None:
-    meta = _read_meta(meta_file)
+# Copying between slots and the live game save.
+#
+# A slot or snapshot folder holds the save file itself ("file" mode), each
+# listed file ("files" mode), or a save_data/ copy of the folder ("folder" mode).
+
+def _has_save_path(game_cfg: GameConfig) -> bool:
+    return bool(game_cfg.save_paths if game_cfg.save_mode == "files" else game_cfg.save_path)
+
+
+def _live_save_exists(game_cfg: GameConfig) -> bool:
+    if game_cfg.save_mode == "files":
+        return any(Path(p).exists() for p in game_cfg.save_paths)
+    return bool(game_cfg.save_path) and Path(game_cfg.save_path).exists()
+
+
+def _copy_file(src: Path, dst: Path) -> None:
+    logger.debug("Copying %s -> %s", src, dst)
+    shutil.copy2(src, dst)
+
+
+def _replace_tree(src: Path, dst: Path) -> None:
+    if dst.exists():
+        shutil.rmtree(dst)
+    logger.debug("Copying folder %s -> %s", src, dst)
+    shutil.copytree(src, dst)
+
+
+def _copy_live_save(game_cfg: GameConfig, dest: Path, file_name: Optional[str] = None) -> None:
+    """Copy the live save into dest. file_name overrides the stored name in "file" mode."""
+    dest.mkdir(parents=True, exist_ok=True)
+    if game_cfg.save_mode == "file":
+        src = Path(game_cfg.save_path)
+        _copy_file(src, dest / (file_name or src.name))
+    elif game_cfg.save_mode == "files":
+        for src in map(Path, game_cfg.save_paths):
+            if src.is_file():
+                _copy_file(src, dest / src.name)
+            else:
+                logger.warning("Configured save file missing: %s", src)
+    elif game_cfg.save_mode == "folder":
+        _replace_tree(Path(game_cfg.save_path), dest / "save_data")
+
+
+def _copy_to_live(src_dir: Path, game_cfg: GameConfig, file_name: Optional[str]) -> None:
+    """Copy a slot or snapshot folder over the live save. file_name is used in "file" mode."""
+    if game_cfg.save_mode == "file":
+        if not file_name or not (src_dir / file_name).is_file():
+            raise FileNotFoundError(f"No save file in {src_dir}")
+        _copy_file(src_dir / file_name, Path(game_cfg.save_path))
+    elif game_cfg.save_mode == "files":
+        for dst in map(Path, game_cfg.save_paths):
+            src = src_dir / dst.name
+            if src.exists():
+                _copy_file(src, dst)
+            else:
+                logger.warning("Save file missing from %s: %s", src_dir, dst.name)
+    elif game_cfg.save_mode == "folder":
+        if not (src_dir / "save_data").is_dir():
+            raise FileNotFoundError(f"No save_data folder in {src_dir}")
+        _replace_tree(src_dir / "save_data", Path(game_cfg.save_path))
+
+
+def import_save(game: str, profile: str, slot_name: str, game_cfg: GameConfig) -> SaveSlot:
+    """Copy the game's live save into a new slot."""
+    slot_dir = SAVES_DIR / game / profile / slot_name
+    logger.info("Importing save: game=%r profile=%r slot=%r mode=%s",
+                game, profile, slot_name, game_cfg.save_mode)
+    slot_dir.mkdir(parents=True, exist_ok=False)
+    _copy_live_save(game_cfg, slot_dir)
+    now = datetime.now()
+    _write_json(slot_dir / "meta.json", _timestamps(now, now))
+    (slot_dir / "notes.txt").write_text("", encoding="utf-8")
+    return _read_slot(slot_dir, game, profile)
+
+
+def replace_save(slot: SaveSlot, game_cfg: GameConfig) -> None:
+    """Overwrite a slot's contents with the game's live save."""
+    logger.info("Replacing slot from live save: game=%r profile=%r slot=%r mode=%s",
+                slot.game, slot.profile, slot.name, game_cfg.save_mode)
+    _copy_live_save(game_cfg, slot.path, file_name=slot.save_file)
+    now = datetime.now()
+    meta_file = slot.path / "meta.json"
+    meta = _read_json_dict(meta_file)
     created = _parse_iso(meta.get("created")) or now
-    _write_meta(meta_file, {
-        "created": created.isoformat(timespec="seconds"),
-        "modified": now.isoformat(timespec="seconds"),
-    })
+    _update_meta(meta_file, _timestamps(created, now))
+    slot.date_modified = now
 
 
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        logger.warning("Invalid ISO datetime in metadata: %r", value)
-        return None
+def load_save(slot: SaveSlot, game_cfg: GameConfig, *, make_backup: bool = True) -> None:
+    """Copy a slot's save over the game's live save, backing up the live save first."""
+    logger.info("Loading slot to live save: game=%r profile=%r slot=%r mode=%s make_backup=%s",
+                slot.game, slot.profile, slot.name, game_cfg.save_mode, make_backup)
+    if not _has_save_path(game_cfg):
+        raise ValueError(f"Save path is not configured for game {game_cfg.name!r}")
+    if make_backup:
+        try:
+            _rotating_backup(game_cfg, _BACKUPS_DIR)
+        except OSError:
+            logger.exception("Failed to back up live save before load; continuing")
+    _copy_to_live(slot.path, game_cfg, slot.save_file)
+
+
+def take_run_backup(game_cfg: GameConfig) -> None:
+    _rotating_backup(game_cfg, _RUN_BACKUPS_DIR)
+
+
+def _rotating_backup(game_cfg: GameConfig, dir_name: str) -> None:
+    """Snapshot the live save into a timestamped folder, keeping the newest few."""
+    if not _live_save_exists(game_cfg):
+        logger.warning("Skipping %s backup; no live save for game=%r", dir_name, game_cfg.name)
+        return
+    root = SAVES_DIR / dir_name / game_cfg.name
+    dest = root / datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
+    logger.info("Backing up live save: %s", dest)
+    _copy_live_save(game_cfg, dest)
+    for old in sorted(d for d in root.iterdir() if d.is_dir())[:-_MAX_BACKUPS]:
+        logger.info("Pruning old backup: %s", old)
+        shutil.rmtree(old)
+
+
+def snapshot_practice_start(game_cfg: GameConfig) -> None:
+    """Save the live save from before practice mode, replacing any previous snapshot."""
+    if not _live_save_exists(game_cfg):
+        logger.warning("Skipping practice-start snapshot; no live save for game=%r", game_cfg.name)
+        return
+    dest = SAVES_DIR / _PRACTICE_START_DIR / game_cfg.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    logger.info("Taking practice-start snapshot: %s", dest)
+    _copy_live_save(game_cfg, dest)
+
+
+def restore_practice_start(game_cfg: GameConfig) -> None:
+    """Put the pre-practice snapshot back as the live save."""
+    src_dir = SAVES_DIR / _PRACTICE_START_DIR / game_cfg.name
+    if not src_dir.exists() or not _has_save_path(game_cfg):
+        logger.warning("No practice-start snapshot to restore for game=%r", game_cfg.name)
+        return
+    logger.info("Restoring practice-start snapshot: %s", src_dir)
+    first_file = next((f.name for f in sorted(src_dir.iterdir()) if f.is_file()), None)
+    _copy_to_live(src_dir, game_cfg, first_file)
