@@ -1,5 +1,5 @@
 import sys
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication, QLineEdit
@@ -9,12 +9,16 @@ _SLOT_RADIUS = _SLOT_ROWS // 2
 
 _HOTKEYS_STYLE = "color: #6f6f80; font-size: 9px; background: transparent;"
 _MESSAGE_STYLE = "color: #c9a8ff; font-size: 10px; font-weight: 600; background: transparent;"
+_SLOT_STYLE = "color: #9393a2; font-size: 11px; background: transparent;"
+_CURRENT_SLOT_STYLE = (
+    "color: #ffffff; font-size: 12px; font-weight: 600; "
+    "background: rgba(255,255,255,0.08); border-radius: 4px;"
+)
 _MESSAGE_DURATION_MS = 2500
 
 
 def _slot_window(total: int, current_row: int, max_count: int = _SLOT_ROWS) -> range:
-    """Pick a window of slot indices centered on current_row, extending toward
-    whichever side has room when the window is clipped by a list boundary."""
+    """Slot indices centered on current_row, shifted inward at either end of the list."""
     if total <= 0:
         return range(0)
     start = max(0, current_row - _SLOT_RADIUS)
@@ -31,22 +35,18 @@ def _slot_window(total: int, current_row: int, max_count: int = _SLOT_ROWS) -> r
 
 
 class OverlayWindow(QWidget):
-    """A small, frameless, always-on-top, semi-transparent status panel shown
-    over a game. Draggable anywhere on its body; reports its new position via
-    on_moved so the caller can persist it."""
+    """Frameless, always-on-top status panel shown over the game.
+
+    Draggable anywhere on its body; on_moved(x, y) is called after a drag.
+    """
 
     def __init__(self, on_moved: Optional[Callable[[int, int], None]] = None, parent=None) -> None:
         super().__init__(parent)
         if sys.platform.startswith("linux"):
-            # Many Linux window managers hide Qt::Tool windows the moment the
-            # owning app loses focus (a policy meant for things like a
-            # floating toolbox palette), which would hide the overlay the
-            # instant the game is focused — the opposite of what it's for.
-            # A plain Window avoids that WM policy; WindowDoesNotAcceptFocus
-            # keeps it from stealing keyboard focus from the game in Tool's
-            # place (mouse events for dragging still work fine without it).
-            # Trade-off: this window may show up in the taskbar on Linux,
-            # unlike Tool windows.
+            # Many Linux window managers hide Tool windows when the app loses
+            # focus, which would hide the overlay as soon as the game is focused.
+            # A plain window that refuses focus avoids that (at the cost of a
+            # possible taskbar entry).
             self.setWindowFlags(
                 Qt.WindowType.Window
                 | Qt.WindowType.FramelessWindowHint
@@ -87,7 +87,7 @@ class OverlayWindow(QWidget):
         layout.addWidget(self._profile_lbl)
         layout.addSpacing(6)
 
-        self._slot_lbls: List[QLabel] = []
+        self._slot_lbls: list[QLabel] = []
         for _ in range(_SLOT_ROWS):
             lbl = QLabel("")
             lbl.setContentsMargins(6, 2, 6, 2)
@@ -112,7 +112,7 @@ class OverlayWindow(QWidget):
         layout.addWidget(self._rename_edit)
 
     def begin_rename(self, current_name: str) -> None:
-        """Show an inline name editor without opening the main window."""
+        """Show the inline name editor in place of the hotkeys line."""
         self._hotkeys_lbl.hide()
         self._rename_edit.setText(current_name)
         self._rename_edit.show()
@@ -129,13 +129,7 @@ class OverlayWindow(QWidget):
         self.setWindowOpacity(max(0.2, min(1.0, value)))
 
     def show_message(self, text: str, duration_ms: int = _MESSAGE_DURATION_MS) -> None:
-        """Briefly show feedback for an action (loaded/imported/renamed/etc.)
-        in place of the hotkeys line, since the main window's status bar isn't
-        visible while tabbed into the game with only the overlay showing.
-
-        Safe to call while the rename/import text entry is open (the label is
-        hidden behind it then) — the text is still set immediately, so it's
-        already showing correctly once end_rename() reveals the label again."""
+        """Briefly show action feedback in place of the hotkeys line."""
         self._hotkeys_lbl.setText(text)
         self._hotkeys_lbl.setStyleSheet(_MESSAGE_STYLE)
         self._message_timer.start(duration_ms)
@@ -146,7 +140,7 @@ class OverlayWindow(QWidget):
         self._hotkeys_lbl.setStyleSheet(_HOTKEYS_STYLE)
 
     def update_content(
-        self, game: str, profile: str, slot_names: List[str], current_row: int,
+        self, game: str, profile: str, slot_names: list[str], current_row: int,
         hotkeys_line: str = "",
     ) -> None:
         self._game_lbl.setText(game or "No game selected")
@@ -159,20 +153,16 @@ class OverlayWindow(QWidget):
                 lbl.setStyleSheet("background: transparent;")
                 continue
             idx = window[i]
-            is_current = idx == current_row
-            if is_current:
+            if idx == current_row:
                 lbl.setText(f"▸ {slot_names[idx]}")
-                lbl.setStyleSheet(
-                    "color: #ffffff; font-size: 12px; font-weight: 600; "
-                    "background: rgba(255,255,255,0.08); border-radius: 4px;"
-                )
+                lbl.setStyleSheet(_CURRENT_SLOT_STYLE)
             else:
                 lbl.setText(f"   {slot_names[idx]}")
-                lbl.setStyleSheet("color: #9393a2; font-size: 11px; background: transparent;")
+                lbl.setStyleSheet(_SLOT_STYLE)
 
         if not slot_names:
             self._slot_lbls[0].setText("No slot selected")
-            self._slot_lbls[0].setStyleSheet("color: #9393a2; font-size: 11px; background: transparent;")
+            self._slot_lbls[0].setStyleSheet(_SLOT_STYLE)
 
         self._hotkeys_line = hotkeys_line
         if not self._message_timer.isActive():
