@@ -12,6 +12,7 @@ import threading
 import urllib.error
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -37,12 +38,12 @@ def _expected_binary_name() -> str:
     return "FromSave.exe" if sys.platform == "win32" else "FromSave"
 
 
+@dataclass
 class UpdateInfo:
-    def __init__(self, version: str, download_url: str, size: int, notes: str):
-        self.version = version
-        self.download_url = download_url
-        self.size = size
-        self.notes = notes
+    version: str
+    download_url: str
+    size: int
+    notes: str  # release notes for every version newer than this one
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
@@ -55,11 +56,7 @@ def is_newer(remote_version: str, local_version: str = __version__) -> bool:
 
 
 def check_latest_release(timeout: float = 10.0) -> Optional[UpdateInfo]:
-    """Return update info if GitHub has a newer release than this build, else None.
-
-    notes covers every release between the installed version and the newest,
-    not just the newest one — otherwise updating past several skipped
-    versions at once would hide what changed in the ones in between."""
+    """Return info on the newest GitHub release if it's newer than this build, else None."""
     req = urllib.request.Request(
         f"{API_URL}?per_page=100",
         headers={"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT},
@@ -139,9 +136,8 @@ def extract_update(zip_path: Path) -> Path:
 
 
 def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) -> None:
-    """Hand off to a detached helper script that waits for this process to exit,
-    copies the staged build over the current install, relaunches the app, and
-    cleans up temp files. The caller must quit the application right after this."""
+    """Start a detached script that waits for this process to exit, copies the staged
+    build over the install, relaunches, and cleans up. The caller must quit right after."""
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Self-update is only supported in a packaged build")
 
@@ -164,8 +160,7 @@ def apply_update_and_restart(staged_dir: Path, zip_path: Optional[Path] = None) 
     if sys.platform == "win32":
         bat_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.bat"
         cleanup_cmds = "\n".join(f'del /q "{p}" >nul 2>&1\nrmdir /s /q "{p}" >nul 2>&1' for p in cleanup_paths)
-        # /XD excludes the release's bundled saves/ presets so an update never
-        # touches the user's real saves directory.
+        # Skip the release's bundled saves/ so the user's saves are never touched.
         bat_contents = f"""@echo off
 timeout /t 3 /nobreak >nul
 robocopy "{staged_dir}" "{app_dir}" /E /R:5 /W:2 /XD "{staged_dir / 'saves'}" >nul
@@ -184,8 +179,7 @@ del "%~f0"
     else:
         sh_path = Path(tempfile.gettempdir()) / f"fromsave_update_{os.getpid()}.sh"
         cleanup_cmds = "\n".join(f'rm -rf "{p}"' for p in cleanup_paths)
-        # Skip the release's bundled saves/ presets so an update never
-        # touches the user's real saves directory.
+        # Skip the release's bundled saves/ so the user's saves are never touched.
         sh_contents = f"""#!/bin/sh
 sleep 3
 for item in "{staged_dir}"/* "{staged_dir}"/.[!.]* "{staged_dir}"/..?*; do
@@ -210,8 +204,7 @@ rm -f "$0"
 
 
 class UpdateChecker(QObject):
-    """Runs the check/download/extract steps on a background thread and
-    reports back to the Qt main thread via signals."""
+    """Runs the check and download on background threads, reporting back via signals."""
 
     check_succeeded = Signal(object)   # UpdateInfo | None
     check_failed = Signal(str)
