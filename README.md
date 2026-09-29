@@ -4,8 +4,6 @@ A save slot manager for PC games. Import your current save, load it back at any 
 
 <img src="docs/screenshots/main_window.png" alt="FromSave Manager main window" width="700">
 
----
-
 ## Supported games
 
 The following games come pre-configured and will appear in the game dropdown automatically:
@@ -19,15 +17,11 @@ The following games come pre-configured and will appear in the game dropdown aut
 
 Any other game can be added manually via **Settings > Add game**.
 
----
-
 ## Getting started
 
 1. Open the app and select a game from the dropdown.
 2. Go to **Settings** and set the save file path for that game.
 3. Click **Import Save** to create your first slot.
-
----
 
 ## Linux / SteamOS
 
@@ -39,9 +33,7 @@ FromSave also ships as a Linux build, which runs natively on SteamOS in Desktop 
 
 The `saves/` folder sits beside the `FromSave` binary, exactly like `saves/` sits beside `FromSave.exe` on Windows.
 
-> **Note:** Global hotkeys are not supported under Wayland (SteamOS Desktop Mode's default session) — this is a limitation of the underlying hotkey library, not a bug. Hotkeys still work normally while the FromSave window is focused.
-
----
+> **Note:** Global hotkeys are not supported under Wayland (SteamOS Desktop Mode's default session). This is a limitation of the hotkey library FromSave uses. Hotkeys still work normally while the FromSave window is focused.
 
 ## Manually importing existing saves
 
@@ -105,8 +97,6 @@ Once copied in, open the app (or switch to a different game and back). Your prof
 - Multiple save files in one slot folder are supported (for games with more than one save file).
 - After copying files in, **switch to a different game and back** in the app to refresh the list, or restart the app.
 
----
-
 ## Practice Mode
 
 Practice Mode locks a slot so the game can't overwrite it. When you enable it:
@@ -119,9 +109,7 @@ The game's current save is backed up (to `saves/_practice_start/<Game Name>/`) b
 
 To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, selecting or loading another slot of the same game switches protection to that slot.
 
-> **Note:** Practice Mode may not work correctly on all games — behavior depends on how the game handles save files.
-
----
+> **Note:** Practice Mode may not work correctly on all games, since it depends on how each game handles its save files.
 
 ## Run Mode
 
@@ -130,13 +118,11 @@ Run Mode is designed for active playthroughs where you want safety backups witho
 - **Load Save** and **Practice Mode** are both disabled, so the game save can't be overwritten while you're playing.
 - The app automatically takes a rolling backup of the game's save file every 2 minutes (to `saves/_run_backups/<Game Name>/<timestamp>/`), keeping the last 3 backups.
 
-Toggle **Run Mode** on before starting a serious run and off when you're done. The backups are separate from your named slots and are not visible in the slot list, they act as a short-term safety net in case the game corrupts or deletes your save mid-session.
-
----
+Toggle **Run Mode** on before starting a serious run and off when you're done. The backups are separate from your named slots and are not visible in the slot list. They're there in case the game corrupts or deletes your save mid-session.
 
 ## Backups
 
-The app creates a few kinds of automatic safety-net backups. They all live inside the `saves` folder next to your named slots, but don't show up in the slot list — they're for manual disaster recovery unless noted otherwise.
+The app creates a few kinds of automatic backups. They all live inside the `saves` folder next to your named slots, but don't show up in the slot list. Unless noted otherwise, they're only there for you to restore by hand.
 
 | Backup                 | Location                                      | When it's taken                                                               | Kept                                    | Restored automatically?             |
 |------------------------|-----------------------------------------------|-------------------------------------------------------------------------------|-----------------------------------------|-------------------------------------|
@@ -145,8 +131,6 @@ The app creates a few kinds of automatic safety-net backups. They all live insid
 | Run Mode backup        | `saves/_run_backups/<Game Name>/<timestamp>/` | Every 2 minutes while Run Mode is on                                          | Last 3                                  | No                                  |
 
 To recover from a `_backups` or `_run_backups` snapshot, open the relevant timestamped folder and copy the save file(s) back to the game's save location by hand.
-
----
 
 ## Hotkeys & overlay
 
@@ -168,8 +152,6 @@ A separate **Overlay** can be shown over the game (default hotkey: **Insert**) w
   </tr>
 </table>
 
----
-
 ## Attaching a video to a slot
 
 Each slot has an optional **Video** field in the detail panel where you can paste a link and it will play inline:
@@ -181,16 +163,12 @@ Use the player's fullscreen button to expand it, and the volume slider for local
 
 > **Note:** Twitch VODs and clips are not currently supported for inline playback, due to the way Twitch handles video embeds. Use **Open in browser** instead.
 
----
-
 ## Checking for updates
 
 FromSave can check GitHub for newer releases and update itself in place.
 
 - Click **Check for Updates** in Settings to check manually, or enable **Automatically check for updates when opening** to check on every launch.
 - If an update is found, downloading and applying it replaces the app files and restarts FromSave automatically.
-
----
 
 ## Adding a new game
 
@@ -202,8 +180,6 @@ FromSave can check GitHub for newer releases and update itself in place.
 The game will appear in the dropdown and a folder for it will be created in `saves/` automatically.
 
 <img src="docs/screenshots/game_paths.png" alt="Game save paths in Settings" width="550">
-
----
 
 ## Companion app
 
@@ -218,19 +194,17 @@ Both devices must be on the same Wi-Fi network, and the manager must be running 
 
 ### Windows Firewall prompt
 
-The first time you enable the companion app, Windows will show a popup asking whether to allow FromSave network access, with two buttons. Click **Allow** (not Cancel/Deny) — this only needs to happen once.
+The first time you enable the companion app, Windows will show a popup asking whether to allow FromSave network access, with two buttons. Click **Allow** (not Cancel/Deny). You only need to do this once.
 
 If you accidentally click **Cancel** or **Deny**, Windows won't ask again and the phone won't be able to connect. To fix it:
 
 1. Press Start, type **"Allow an app through Windows Firewall"**, and open it.
 2. Click **Change settings** (needs admin).
 3. Find **FromSave** in the list and tick the **Private** checkbox next to it.
-   - If it's not in the list at all, click **Allow another app...** → **Browse...** → select `FromSave.exe` → **Add** → tick **Private**.
+   - If it's not in the list at all, click **Allow another app...** -> **Browse...** -> select `FromSave.exe` -> **Add** -> tick **Private**.
 4. Click **OK**.
 
 If FromSave is already listed and allowed but the phone still can't connect, check **Windows Defender Firewall with Advanced Security > Inbound Rules** for a rule blocking FromSave and either delete it or change its action to **Allow the connection**.
-
----
 
 ## Icon attribution
 
