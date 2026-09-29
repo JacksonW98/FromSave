@@ -1,12 +1,12 @@
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, fields
 
 from app_paths import app_dir, migrate_from_bundle
 
 migrate_from_bundle("config.json")
 
-_CONFIG_FILE = app_dir() / "config.json"
+CONFIG_FILE = app_dir() / "config.json"
 logger = logging.getLogger(__name__)
 
 
@@ -18,7 +18,7 @@ class Config:
     auto_name_imports: bool = True
     hide_paths: bool = False
     slot_sort: str = "name"  # "name" | "created" | "modified" | "custom"
-    slot_sort_desc: bool = True  # True = descending (newest first / Z→A)
+    slot_sort_desc: bool = True
     last_game: str = ""
     last_profile: str = ""
     last_slot: str = ""
@@ -53,59 +53,21 @@ class Config:
 
 
 def load_config() -> Config:
-    if not _CONFIG_FILE.exists():
-        logger.info("Config file not found, using defaults: %s", _CONFIG_FILE)
+    if not CONFIG_FILE.exists():
+        logger.info("Config file not found, using defaults: %s", CONFIG_FILE)
         return Config()
     try:
-        with open(_CONFIG_FILE, encoding="utf-8") as f:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        logger.info("Loaded config: %s", _CONFIG_FILE)
-        return Config(
-            confirm_delete=data.get("confirm_delete", True),
-            confirm_replace=data.get("confirm_replace", True),
-            confirm_lock_slot=data.get("confirm_lock_slot", True),
-            auto_name_imports=data.get("auto_name_imports", True),
-            hide_paths=data.get("hide_paths", False),
-            slot_sort=data.get("slot_sort", "name"),
-            slot_sort_desc=data.get("slot_sort_desc", True),
-            last_game=data.get("last_game", ""),
-            last_profile=data.get("last_profile", ""),
-            last_slot=data.get("last_slot", ""),
-            hotkey_import=data.get("hotkey_import", "F5"),
-            hotkey_load=data.get("hotkey_load", "F9"),
-            hotkey_replace=data.get("hotkey_replace", ""),
-            hotkey_ro_toggle=data.get("hotkey_ro_toggle", "F6"),
-            hotkey_next_slot=data.get("hotkey_next_slot", ""),
-            hotkey_prev_slot=data.get("hotkey_prev_slot", ""),
-            global_hotkeys_enabled=data.get("global_hotkeys_enabled", False),
-            protect_warning_acknowledged=data.get("protect_warning_acknowledged", False),
-            soft_delete=data.get("soft_delete", True),
-            hide_details=data.get("hide_details", False),
-            window_width=data.get("window_width", 0),
-            window_height=data.get("window_height", 0),
-            check_updates_on_startup=data.get("check_updates_on_startup", True),
-            hotkey_toggle_overlay=data.get("hotkey_toggle_overlay", "Ins"),
-            overlay_hotkey_import=data.get("overlay_hotkey_import", "F5"),
-            overlay_hotkey_load=data.get("overlay_hotkey_load", "F9"),
-            overlay_hotkey_replace=data.get("overlay_hotkey_replace", ""),
-            overlay_hotkey_rename=data.get("overlay_hotkey_rename", "F2"),
-            overlay_hotkey_ro_toggle=data.get("overlay_hotkey_ro_toggle", "F6"),
-            overlay_hotkey_next_slot=data.get("overlay_hotkey_next_slot", "Ctrl+Down"),
-            overlay_hotkey_prev_slot=data.get("overlay_hotkey_prev_slot", "Ctrl+Up"),
-            overlay_opacity=data.get("overlay_opacity", 0.85),
-            overlay_pos_x=data.get("overlay_pos_x", -1),
-            overlay_pos_y=data.get("overlay_pos_y", -1),
-            companion_enabled=data.get("companion_enabled", False),
-            companion_port=data.get("companion_port", 8765),
-            companion_token=data.get("companion_token", ""),
-            companion_firewall_notice_shown=data.get("companion_firewall_notice_shown", False),
-        )
     except (json.JSONDecodeError, OSError):
-        logger.exception("Failed to load config, using defaults: %s", _CONFIG_FILE)
+        logger.exception("Failed to load config, using defaults: %s", CONFIG_FILE)
         return Config()
+    logger.info("Loaded config: %s", CONFIG_FILE)
+    known = {f.name for f in fields(Config)}
+    return Config(**{k: v for k, v in data.items() if k in known})
 
 
 def save_config(cfg: Config) -> None:
-    logger.debug("Saving config: %s", _CONFIG_FILE)
-    with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+    logger.debug("Saving config: %s", CONFIG_FILE)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(asdict(cfg), f, indent=4)
