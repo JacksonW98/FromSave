@@ -1,93 +1,28 @@
 """Parse video URLs and build embed HTML for in-app playback."""
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 _DIRECT_VIDEO_EXTENSIONS = (".mp4", ".webm", ".ogg", ".mov", ".m4v", ".mkv")
 
-_YOUTUBE_PATTERNS = (
-    re.compile(r"(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([\w-]{11})"),
-    re.compile(r"youtube\.com/watch\?.*[?&]v=([\w-]{11})"),
+_YOUTUBE_ID = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|embed/|shorts/)|youtu\.be/)([\w-]{11})"
 )
-_TWITCH_VOD_PATTERN = re.compile(r"twitch\.tv/videos/(\d+)")
-_TWITCH_CLIP_PATTERNS = (
-    re.compile(r"twitch\.tv/[^/]+/clip/([\w-]+)"),
-    re.compile(r"clips\.twitch\.tv/([\w-]+)"),
-)
-
-
-def normalize_video_url(url: str) -> str:
-    return url.strip()
-
-
-def is_direct_video_url(url: str) -> bool:
-    path = urlparse(url).path.lower()
-    return any(path.endswith(ext) for ext in _DIRECT_VIDEO_EXTENSIONS)
 
 
 def youtube_video_id(url: str) -> str | None:
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().removeprefix("www.")
-    if host == "youtu.be":
-        vid = parsed.path.lstrip("/").split("/")[0]
-        return vid if len(vid) == 11 else None
-    if host in ("youtube.com", "m.youtube.com"):
-        if parsed.path.startswith("/embed/"):
-            vid = parsed.path.split("/")[2]
-            return vid if len(vid) == 11 else None
-        if parsed.path.startswith("/shorts/"):
-            vid = parsed.path.split("/")[2]
-            return vid if len(vid) == 11 else None
-        if parsed.path == "/watch":
-            qs = parse_qs(parsed.query)
-            vid = qs.get("v", [None])[0]
-            return vid if vid and len(vid) == 11 else None
-    for pattern in _YOUTUBE_PATTERNS:
-        match = pattern.search(url)
-        if match:
-            return match.group(1)
-    return None
-
-
-def twitch_vod_id(url: str) -> str | None:
-    match = _TWITCH_VOD_PATTERN.search(url)
+    match = _YOUTUBE_ID.search(url)
     return match.group(1) if match else None
-
-
-def twitch_clip_id(url: str) -> str | None:
-    for pattern in _TWITCH_CLIP_PATTERNS:
-        match = pattern.search(url)
-        if match:
-            return match.group(1)
-    return None
-
-
-def embed_url_for(url: str, autoplay: bool = True) -> str | None:
-    """Return an iframe-friendly embed URL, or None if unsupported."""
-    url = normalize_video_url(url)
-    if not url:
-        return None
-
-    yt_id = youtube_video_id(url)
-    if yt_id:
-        ap = "1" if autoplay else "0"
-        return f"https://www.youtube.com/embed/{yt_id}?autoplay={ap}&enablejsapi=1"
-
-    return None
 
 
 def embed_html(url: str, autoplay: bool = True) -> str | None:
     """Return a minimal HTML page that embeds the video, or None if unsupported."""
-    url = normalize_video_url(url)
-    if not url:
-        return None
-
-    embed = embed_url_for(url, autoplay=autoplay)
-    if embed:
-        return _iframe_page(embed)
-
-    if is_direct_video_url(url):
+    url = url.strip()
+    if yt_id := youtube_video_id(url):
+        return _iframe_page(
+            f"https://www.youtube.com/embed/{yt_id}?autoplay={int(autoplay)}&enablejsapi=1"
+        )
+    if urlparse(url).path.lower().endswith(_DIRECT_VIDEO_EXTENSIONS):
         return _video_page(url, autoplay=autoplay)
-
     return None
 
 
