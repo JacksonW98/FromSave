@@ -112,12 +112,12 @@ Once copied in, open the app (or switch to a different game and back). Your prof
 Practice Mode locks a slot so the game can't overwrite it. When you enable it:
 
 1. Select the slot you want to practice from.
-2. Click the **Practice Mode** toggle (or use the checkbox in the slot detail panel).
+2. Click the **Practice Mode** toggle.
 3. The app immediately loads that slot into the game and then watches the save file. Any time the game tries to save, the app restores the slot, discarding the new data.
 
 The game's current save is backed up (to `saves/_practice_start/<Game Name>/`) before the overwrite. When you disable Practice Mode, that save is automatically restored, putting the game back to where it was before you started practicing.
 
-To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, **Load Save** is blocked for that game.
+To save progress normally again, disable Practice Mode before saving in-game. While Practice Mode is on, selecting or loading another slot of the same game switches protection to that slot.
 
 > **Note:** Practice Mode may not work correctly on all games — behavior depends on how the game handles save files.
 
